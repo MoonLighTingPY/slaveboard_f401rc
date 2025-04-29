@@ -5,116 +5,119 @@
 #include <queue.h>
 #include <semphr.h>
 
-// Configuration constants
+#define STACK_SIZE 256 // Розмір стека для тасок FreeRTOS
+#define DEBUG_ENABLE 1 // Дебаг в серіал. Якщо поставити 0, то все пов'язане з дебагом не компілюється
+
 #define MODBUS_BAUD 115200
 #define MODBUS_CONFIG SERIAL_8N1
-#define STACK_SIZE 256 // Stack size for tasks
 
+// Піни
+const int16_t sensorPins[4] = {PC3, PC2, PC1, PC0}; // Інпути сенсорів
+const int16_t outPins[4] = {PC13, PA0, PC15, PC14}; // Виводи для управління
+const int16_t ledPins[4] = {PB12, PB13, PB14, PB15}; // Діоди індикації
+const int16_t dePin = PA8;                          // Пін DE для RS-485
+const int16_t addressPins[4] = {PC10, PC11, PC12, PD2}; // DIP світчі для адресації Modbus
 
-// Configure hardware serial for Modbus communication
+// Серіал для Modbus
 HardwareSerial Serial1(USART1);
 
-// Pin definitions with meaningful names
-const int16_t sensorPins[4] = {PC3, PC2, PC1, PC0};    // Input sensors
-const int16_t outPins[4] = {PC13, PA0, PC15, PC14};    // Output control pins
-const int16_t ledPins[4] = {PB12, PB13, PB14, PB15};   // LED indicators
-const int16_t dePin = PA8;                             // RS-485 driver enable pin
-const int16_t addressPins[4] = {PC10, PC11, PC12, PD2}; // Modbus address DIP switches
-
-// Initialize Modbus RTU slave with serial port and driver enable pin
+// Ініціалізація Modbus RTU як слейв, по Serial1, з DE піном
 ModbusRTUSlave modbus(Serial1, dePin);
 
-// Modbus register configuration
-const uint8_t NUM_COILS = 4;              // Number of coils (digital outputs)
-const uint8_t NUM_DISCRETE_INPUTS = 4;    // Number of discrete inputs (digital inputs)
-const uint8_t NUM_HOLDING_REGISTERS = 4;  // Number of holding registers (writable registers)
-const uint8_t NUM_INPUT_REGISTERS = 4;    // Number of input registers (read-only registers)
+// Modbus змінні
+const uint8_t NUM_COILS = 4;
+const uint8_t NUM_DISCRETE_INPUTS = 4;
+const uint8_t NUM_HOLDING_REGISTERS = 4;
+const uint8_t NUM_INPUT_REGISTERS = 4;
 
-// Modbus variables
-uint8_t modbusAddress = 3;                // Default Modbus device address
-bool coils[NUM_COILS];                    // Storage for coil states
-bool discreteInputs[NUM_DISCRETE_INPUTS]; // Storage for discrete input states
-uint16_t holdingRegisters[NUM_HOLDING_REGISTERS]; // Storage for holding register values
-uint16_t inputRegisters[NUM_INPUT_REGISTERS];     // Storage for input register values
+uint8_t modbusAddress = 3; // Адреса Modbus слейва
+bool coils[NUM_COILS]; // Масив котушок
+bool discreteInputs[NUM_DISCRETE_INPUTS]; // Масив дискретних входів
+uint16_t holdingRegisters[NUM_HOLDING_REGISTERS]; // Масив регістрів
+uint16_t inputRegisters[NUM_INPUT_REGISTERS];     // Масив регістрів вводу
 
-// Address configuration
-bool address[4]; // Individual address bits from DIP switches
+bool address[4]; // Окремі біти адреси Modbus
 
-// Sensor and control state tracking
-int reloadSensor = 0;       // Current state of reload sensor
-int lastReloadSensor = 0;   // Previous state of reload sensor
-int reloadSignal = 0;       // Current state of reload signal
-int lastReloadSignal = 0;   // Previous state of reload signal
-uint16_t bulletCounter = 0; // Counter for bullets fired
-int counterSensor = 0;      // Current state of counter sensor
-int lastCounterSensor = 0;  // Previous state of counter sensor
+// Сенсори та їх стани
+int reloadSensor = 0; // Стан перезарядки
+int lastReloadSensor = 0;
+int reloadSignal = 0; // Сигнал перезарядки
+int lastReloadSignal = 0;
+int counterSensor = 0; // Стан сенсора лічильника
+int lastCounterSensor = 0;
+uint16_t bulletCounter = 0; // Лічильник куль
 
-// Mutex for protecting shared resources
-SemaphoreHandle_t modbusRegisterMutex;
+// М'ютекс, щоб не було конфліктів при доступі до масивів Modbus між тасками
+SemaphoreHandle_t modbusRegisterMutex; 
 
-// Task handles
+// Хендлери і декларації тасок
 TaskHandle_t modbusTaskHandle;
 TaskHandle_t sensorTaskHandle;
 TaskHandle_t outputTaskHandle;
 TaskHandle_t motorControlTaskHandle;
 
-// Task functions declaration
 void modbusTask(void *pvParameters);
 void sensorTask(void *pvParameters);
 void outputTask(void *pvParameters);
 void motorControlTask(void *pvParameters);
 
+#if DEBUG_ENABLE
+TaskHandle_t debugTaskHandle;
+void debugTask(void *pvParameters);
+#endif
+
 void setup() {
-  // Initialize serial communications
-  Serial.begin(115200);             // Debug serial
-  Serial1.begin(MODBUS_BAUD, MODBUS_CONFIG); // Modbus RTU communication
-  Serial2.begin(115200, SERIAL_8N1); // Motor controller communication
+  #if DEBUG_ENABLE
+  Serial.begin(115200); // Основний серіал по юсб, для дебагу
+  #endif
+  Serial1.begin(MODBUS_BAUD, MODBUS_CONFIG); // Modbus RTU
+  Serial2.begin(115200, SERIAL_8N1); // Драйвер для моторів
   
-  // Configure RS-485 driver enable pin
+  // RS-485 driver enable pin
   pinMode(dePin, OUTPUT);
 
-  // Configure DIP switch inputs for Modbus addressing (with pull-ups)
+  // DIP перемикачі для адресації Modbus (4 біти), підтягнуті до VCC
   for (int i = 0; i < 4; i++) {
     pinMode(addressPins[i], INPUT_PULLUP);
   }
   
-  // Configure sensor inputs (with pull-ups)
+  // Сенсори, підтягнуті до VCC
   for (int i = 0; i < 4; i++) {
     pinMode(sensorPins[i], INPUT_PULLUP);
   }
   
-  // Configure output pins
+  // ВИводи для управління та індикації
   for (int i = 0; i < 4; i++) {
     pinMode(outPins[i], OUTPUT);
     pinMode(ledPins[i], OUTPUT);
   }
 
-  // Read address DIP switches (inverted because of pull-ups)
+  // Задати адресу Modbus з DIP перемикачів (перевернуті, бо підтягнуті до VCC)
   for (int i = 0; i < 4; i++) {
     address[i] = !digitalRead(addressPins[i]);
     bitWrite(modbusAddress, i, address[i]);
   }
 
-  // Configure Modbus registers
+  // Конфігурація Modbus
   modbus.configureCoils(coils, NUM_COILS);
   modbus.configureDiscreteInputs(discreteInputs, NUM_DISCRETE_INPUTS);
   modbus.configureHoldingRegisters(holdingRegisters, NUM_HOLDING_REGISTERS);
   modbus.configureInputRegisters(inputRegisters, NUM_INPUT_REGISTERS);
 
-  // Initialize Modbus communication
+  // Ініціалізація Modbus з адресою
   modbus.begin(modbusAddress, MODBUS_BAUD, MODBUS_CONFIG);
   
-  // Create a mutex to protect shared resources
+  // Створення м'ютексу для захисту масивів Modbus
   modbusRegisterMutex = xSemaphoreCreateMutex();
   
-  // Create tasks
+  // Створення тасок
   xTaskCreate(
-    modbusTask,           // Function that implements the task
-    "ModbusTask",         // Text name for the task
-    STACK_SIZE,           // Stack size in words, not bytes
-    NULL,                 // Parameter passed into the task
-    3,                    // Priority (higher number = higher priority)
-    &modbusTaskHandle     // Task handle
+    modbusTask,
+    "ModbusTask",
+    STACK_SIZE,
+    NULL,
+    3, // Найвища пріоритетність, бо Modbus повинен бути завжди активний
+    &modbusTaskHandle
   );
   
   xTaskCreate(
@@ -122,7 +125,7 @@ void setup() {
     "SensorTask",
     STACK_SIZE,
     NULL,
-    2,
+    2, // Вища пріоритетність, читаємо сенсори
     &sensorTaskHandle
   );
   
@@ -131,7 +134,7 @@ void setup() {
     "OutputTask",
     STACK_SIZE,
     NULL,
-    1,
+    1, // Низька пріоритетність, бо виводи не критичні (TODO: вивести М2 постріл на окрему таску з вищим пріоритетом)
     &outputTaskHandle
   );
   
@@ -140,19 +143,62 @@ void setup() {
     "MotorControlTask",
     STACK_SIZE,
     NULL,
-    2,
+    2, 
     &motorControlTaskHandle
   );
-  
-  // Start the scheduler
+
+  #if DEBUG_ENABLE
+  xTaskCreate(
+    debugTask,
+    "DebugTask",
+    STACK_SIZE,
+    NULL,
+    1,  // Найнижча пріоритетність, бо дебаг не критичний
+    NULL
+  );
+  #endif 
+  // Запуск диспетчера FreeRTOS
   vTaskStartScheduler();
 }
 
 void loop() {
-  // Empty, everything is handled by FreeRTOS tasks
 }
 
-// Task to handle Modbus communications
+#if DEBUG_ENABLE
+void debugTask(void *pvParameters) {
+  TickType_t xLastWakeTime;
+  const TickType_t xFrequency = pdMS_TO_TICKS(500);
+  xLastWakeTime = xTaskGetTickCount();
+  
+  for(;;) {
+    if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
+      Serial.println("STATUS: MB Addr=" + String(modbusAddress) + " BulletCount=" + String(bulletCounter));
+      Serial.println("Reload Sensor=" + String(reloadSensor) + "/" + String(lastReloadSensor) + 
+                    " Reload Signal=" + String(reloadSignal) + "/" + String(lastReloadSignal) + 
+                    " Counter Sensor=" + String(counterSensor) + "/" + String(lastCounterSensor));
+    
+      Serial.print("D INPUTS: ");
+      for (int i = 0; i < NUM_DISCRETE_INPUTS; i++) {
+        Serial.print(String(discreteInputs[i] ? "1, " : "0, "));
+      }
+      Serial.println();
+      
+      Serial.print("COILS:  ");
+      for (int i = 0; i < NUM_COILS; i++) {
+        Serial.print(String(coils[i] ? "1, " : "0, "));
+      }
+      Serial.println();
+      Serial.println("----"); 
+
+      xSemaphoreGive(modbusRegisterMutex);
+    }
+    
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
+#endif
+
+// Окрема таска для Modbus
 void modbusTask(void *pvParameters) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = 5; // 5ms (200Hz)
@@ -160,15 +206,13 @@ void modbusTask(void *pvParameters) {
   xLastWakeTime = xTaskGetTickCount();
   
   for(;;) {
-    // Process Modbus communication
     modbus.poll();
     
-    // Wait for the next cycle
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }
 
-// Task to read sensors and update discrete inputs
+// Таска на читання сенсорів, оновлення входів та лічильника
 void sensorTask(void *pvParameters) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = 10; // 10ms (100Hz)
@@ -177,24 +221,22 @@ void sensorTask(void *pvParameters) {
   
   for(;;) {
     if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
-      // Read all sensor inputs into discrete inputs array
+      // Читання всіх сенсорів і зразу запис в дискретні входи
       for (int i = 0; i < NUM_DISCRETE_INPUTS; i++) {
         discreteInputs[i] = digitalRead(sensorPins[i]);
       }
       
-      // Detect bullet fired via counter sensor
+
       counterSensor = discreteInputs[2];
       if (counterSensor != lastCounterSensor) {
         if (counterSensor == LOW) {
-          bulletCounter++; // Increment counter on falling edge
+          bulletCounter++; // Falling edge
         }
       }
       lastCounterSensor = counterSensor;
-      
-      // Update holding register with count
+
       holdingRegisters[0] = bulletCounter;
       
-      // Bullet counter management
       if (holdingRegisters[0] == 0) {
         bulletCounter = 0; // Reset counter if register is cleared
       }
@@ -207,7 +249,7 @@ void sensorTask(void *pvParameters) {
   }
 }
 
-// Task to update outputs based on Modbus register values
+// Таска для управління виходами
 void outputTask(void *pvParameters) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = 20; // 20ms (50Hz)
@@ -216,23 +258,21 @@ void outputTask(void *pvParameters) {
   
   for(;;) {
     if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
-      // Update outputs based on Modbus register values
       analogWrite(ledPins[1], holdingRegisters[0]);
       analogWrite(ledPins[2], holdingRegisters[1]);
       analogWrite(ledPins[3], holdingRegisters[2]);
       analogWrite(outPins[1], holdingRegisters[3]);
-      digitalWrite(outPins[0], coils[0]); // M2 trigger control
-      digitalWrite(ledPins[0], coils[1]); // Reload indicator LED
+      digitalWrite(outPins[0], coils[0]); // M2 спуск
+      digitalWrite(ledPins[0], coils[1]); // Перезарядка
       
       xSemaphoreGive(modbusRegisterMutex);
     }
     
-    // Wait for the next cycle
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }
 
-// Task to handle motor control communications
+// Комунікація з драйвером до моторів
 void motorControlTask(void *pvParameters) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = 50; // 50ms (20Hz)
@@ -241,50 +281,46 @@ void motorControlTask(void *pvParameters) {
   
   for(;;) {
     if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
-      // Handle reload signal from Modbus control
+      // Сигнал перезарядки
       reloadSignal = coils[1];
       if (reloadSignal != lastReloadSignal) {
         if (reloadSignal == HIGH && reloadSensor == LOW) {
-          xSemaphoreGive(modbusRegisterMutex); // Release mutex before long operations
+          xSemaphoreGive(modbusRegisterMutex); // Звільняємо м'ютекс, бо serial.print блокуючий
           
-          // Send commands to motor controller for reload operation
           Serial2.println("w axis0.requested_state 8");
           Serial2.println("v 0 -100");
-          vTaskDelay(pdMS_TO_TICKS(3000)); // Use FreeRTOS delay instead of blocking delay()
+          vTaskDelay(pdMS_TO_TICKS(3000)); // Чекаємо поки драйвер відригне
           
-          if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
+          if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) { // Забираємо м'ютекс назад
             lastReloadSignal = reloadSignal;
             xSemaphoreGive(modbusRegisterMutex);
           }
-          continue; // Skip the rest of this iteration
+          continue;
         }
       }
       
-      // Monitor reload sensor state
+      // Сенсор перезардки
       reloadSensor = discreteInputs[0];
       if (reloadSensor != lastReloadSensor) {
         if (reloadSensor == LOW) {
-          xSemaphoreGive(modbusRegisterMutex); // Release mutex before I/O operation
+          xSemaphoreGive(modbusRegisterMutex); 
           
-          // Reset motor state when reload completes
           Serial2.println("w axis0.requested_state 1");
           
           if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
             lastReloadSensor = reloadSensor;
             xSemaphoreGive(modbusRegisterMutex);
           }
-          continue; // Skip the rest of this iteration
+          continue;
         }
       }
       
-      // Update state tracking variables
       lastReloadSignal = reloadSignal;
       lastReloadSensor = reloadSensor;
       
       xSemaphoreGive(modbusRegisterMutex);
     }
     
-    // Wait for the next cycle
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }
