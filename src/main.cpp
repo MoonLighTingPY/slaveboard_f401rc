@@ -1,9 +1,15 @@
 #include <Arduino.h>
 #include <ModbusRTUSlave.h>
+#include <FreeRTOS.h>
+#include <task.h>
+#include <queue.h>
+#include <semphr.h>
 
 // Configuration constants
 #define MODBUS_BAUD 115200
 #define MODBUS_CONFIG SERIAL_8N1
+#define STACK_SIZE 256 // Stack size for tasks
+
 
 // Configure hardware serial for Modbus communication
 HardwareSerial Serial1(USART1);
@@ -42,6 +48,21 @@ int lastReloadSignal = 0;   // Previous state of reload signal
 uint16_t bulletCounter = 0; // Counter for bullets fired
 int counterSensor = 0;      // Current state of counter sensor
 int lastCounterSensor = 0;  // Previous state of counter sensor
+
+// Mutex for protecting shared resources
+SemaphoreHandle_t modbusRegisterMutex;
+
+// Task handles
+TaskHandle_t modbusTaskHandle;
+TaskHandle_t sensorTaskHandle;
+TaskHandle_t outputTaskHandle;
+TaskHandle_t motorControlTaskHandle;
+
+// Task functions declaration
+void modbusTask(void *pvParameters);
+void sensorTask(void *pvParameters);
+void outputTask(void *pvParameters);
+void motorControlTask(void *pvParameters);
 
 void setup() {
   // Initialize serial communications
@@ -82,60 +103,188 @@ void setup() {
 
   // Initialize Modbus communication
   modbus.begin(modbusAddress, MODBUS_BAUD, MODBUS_CONFIG);
+  
+  // Create a mutex to protect shared resources
+  modbusRegisterMutex = xSemaphoreCreateMutex();
+  
+  // Create tasks
+  xTaskCreate(
+    modbusTask,           // Function that implements the task
+    "ModbusTask",         // Text name for the task
+    STACK_SIZE,           // Stack size in words, not bytes
+    NULL,                 // Parameter passed into the task
+    3,                    // Priority (higher number = higher priority)
+    &modbusTaskHandle     // Task handle
+  );
+  
+  xTaskCreate(
+    sensorTask,
+    "SensorTask",
+    STACK_SIZE,
+    NULL,
+    2,
+    &sensorTaskHandle
+  );
+  
+  xTaskCreate(
+    outputTask,
+    "OutputTask",
+    STACK_SIZE,
+    NULL,
+    1,
+    &outputTaskHandle
+  );
+  
+  xTaskCreate(
+    motorControlTask,
+    "MotorControlTask",
+    STACK_SIZE,
+    NULL,
+    2,
+    &motorControlTaskHandle
+  );
+  
+  // Start the scheduler
+  vTaskStartScheduler();
 }
 
 void loop() {
-  // Read all sensor inputs into discrete inputs array
-  for (int i = 0; i < NUM_DISCRETE_INPUTS; i++) {
-    discreteInputs[i] = digitalRead(sensorPins[i]);
+  // Empty, everything is handled by FreeRTOS tasks
+}
+
+// Task to handle Modbus communications
+void modbusTask(void *pvParameters) {
+  TickType_t xLastWakeTime;
+  const TickType_t xFrequency = 5; // 5ms (200Hz)
+  
+  xLastWakeTime = xTaskGetTickCount();
+  
+  for(;;) {
+    // Process Modbus communication
+    modbus.poll();
+    
+    // Wait for the next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
+}
 
-  // Process Modbus communication
-  modbus.poll();
-
-  // Update outputs based on Modbus register values
-  analogWrite(ledPins[1], holdingRegisters[0]);
-  analogWrite(ledPins[2], holdingRegisters[1]);
-  analogWrite(ledPins[3], holdingRegisters[2]);
-  analogWrite(outPins[1], holdingRegisters[3]);
-  digitalWrite(outPins[0], coils[0]); // M2 trigger control
-  digitalWrite(ledPins[0], coils[1]); // Reload indicator LED
-
-
-  // Handle reload signal from Modbus control
-  reloadSignal = coils[1];
-  if (reloadSignal != lastReloadSignal) {
-    if (reloadSignal == HIGH && reloadSensor == LOW) {
-      // Send commands to motor controller for reload operation
-      Serial2.println("w axis0.requested_state 8");
-      Serial2.println("v 0 -100");
-      delay(3000);
+// Task to read sensors and update discrete inputs
+void sensorTask(void *pvParameters) {
+  TickType_t xLastWakeTime;
+  const TickType_t xFrequency = 10; // 10ms (100Hz)
+  
+  xLastWakeTime = xTaskGetTickCount();
+  
+  for(;;) {
+    if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
+      // Read all sensor inputs into discrete inputs array
+      for (int i = 0; i < NUM_DISCRETE_INPUTS; i++) {
+        discreteInputs[i] = digitalRead(sensorPins[i]);
+      }
+      
+      // Detect bullet fired via counter sensor
+      counterSensor = discreteInputs[2];
+      if (counterSensor != lastCounterSensor) {
+        if (counterSensor == LOW) {
+          bulletCounter++; // Increment counter on falling edge
+        }
+      }
+      lastCounterSensor = counterSensor;
+      
+      // Update holding register with count
+      holdingRegisters[0] = bulletCounter;
+      
+      // Bullet counter management
+      if (holdingRegisters[0] == 0) {
+        bulletCounter = 0; // Reset counter if register is cleared
+      }
+      
+      xSemaphoreGive(modbusRegisterMutex);
     }
+    
+    // Wait for the next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
-  lastReloadSignal = reloadSignal;
+}
 
-  // Monitor reload sensor state
-  reloadSensor = discreteInputs[0];
-  if (reloadSensor != lastReloadSensor) {
-    if (reloadSensor == LOW) {
-      // Reset motor state when reload completes
-      Serial2.println("w axis0.requested_state 1");
+// Task to update outputs based on Modbus register values
+void outputTask(void *pvParameters) {
+  TickType_t xLastWakeTime;
+  const TickType_t xFrequency = 20; // 20ms (50Hz)
+  
+  xLastWakeTime = xTaskGetTickCount();
+  
+  for(;;) {
+    if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
+      // Update outputs based on Modbus register values
+      analogWrite(ledPins[1], holdingRegisters[0]);
+      analogWrite(ledPins[2], holdingRegisters[1]);
+      analogWrite(ledPins[3], holdingRegisters[2]);
+      analogWrite(outPins[1], holdingRegisters[3]);
+      digitalWrite(outPins[0], coils[0]); // M2 trigger control
+      digitalWrite(ledPins[0], coils[1]); // Reload indicator LED
+      
+      xSemaphoreGive(modbusRegisterMutex);
     }
+    
+    // Wait for the next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
-  lastReloadSensor = reloadSensor;
+}
 
-  // Bullet counter management
-  if (holdingRegisters[0] == 0) {
-    bulletCounter = 0; // Reset counter if register is cleared
-  }
-
-  // Detect bullet fired via counter sensor
-  counterSensor = discreteInputs[2];
-  if (counterSensor != lastCounterSensor) {
-    if (counterSensor == LOW) {
-      bulletCounter++; // Increment counter on falling edge
+// Task to handle motor control communications
+void motorControlTask(void *pvParameters) {
+  TickType_t xLastWakeTime;
+  const TickType_t xFrequency = 50; // 50ms (20Hz)
+  
+  xLastWakeTime = xTaskGetTickCount();
+  
+  for(;;) {
+    if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
+      // Handle reload signal from Modbus control
+      reloadSignal = coils[1];
+      if (reloadSignal != lastReloadSignal) {
+        if (reloadSignal == HIGH && reloadSensor == LOW) {
+          xSemaphoreGive(modbusRegisterMutex); // Release mutex before long operations
+          
+          // Send commands to motor controller for reload operation
+          Serial2.println("w axis0.requested_state 8");
+          Serial2.println("v 0 -100");
+          vTaskDelay(pdMS_TO_TICKS(3000)); // Use FreeRTOS delay instead of blocking delay()
+          
+          if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
+            lastReloadSignal = reloadSignal;
+            xSemaphoreGive(modbusRegisterMutex);
+          }
+          continue; // Skip the rest of this iteration
+        }
+      }
+      
+      // Monitor reload sensor state
+      reloadSensor = discreteInputs[0];
+      if (reloadSensor != lastReloadSensor) {
+        if (reloadSensor == LOW) {
+          xSemaphoreGive(modbusRegisterMutex); // Release mutex before I/O operation
+          
+          // Reset motor state when reload completes
+          Serial2.println("w axis0.requested_state 1");
+          
+          if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
+            lastReloadSensor = reloadSensor;
+            xSemaphoreGive(modbusRegisterMutex);
+          }
+          continue; // Skip the rest of this iteration
+        }
+      }
+      
+      // Update state tracking variables
+      lastReloadSignal = reloadSignal;
+      lastReloadSensor = reloadSensor;
+      
+      xSemaphoreGive(modbusRegisterMutex);
     }
+    
+    // Wait for the next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
-  lastCounterSensor = counterSensor;
-  holdingRegisters[0] = bulletCounter; // Update holding register with count
-} // end loop
+}
