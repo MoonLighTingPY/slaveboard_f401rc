@@ -238,13 +238,12 @@ void sensorTask(void *pvParameters) {
       holdingRegisters[0] = bulletCounter;
       
       if (holdingRegisters[0] == 0) {
-        bulletCounter = 0; // Reset counter if register is cleared
+        bulletCounter = 0;
       }
       
       xSemaphoreGive(modbusRegisterMutex);
     }
     
-    // Wait for the next cycle
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }
