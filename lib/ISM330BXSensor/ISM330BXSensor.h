@@ -23,6 +23,18 @@
 #define ISM330BX_OUTY_H_A          0x2B  // Acceleration Y-axis high byte
 #define ISM330BX_OUTX_L_A          0x2C  // Acceleration X-axis low byte
 #define ISM330BX_OUTX_H_A          0x2D  // Acceleration X-axis high byte
+#define ISM330BX_EMB_FUNC_EN_A     0x04  // Embedded functions enable register A
+#define ISM330BX_EMB_FUNC_INIT_A   0x66  // Embedded functions initialization register A
+#define ISM330BX_SFLP_GAME_EN      0x01  // Bit 0 of EMB_FUNC_EN_A register
+#define ISM330BX_SFLP_GAME_INIT    0x01  // Bit 0 of EMB_FUNC_INIT_A register
+
+// Gravity vector output registers (UI_OUTX/Y/Z for DualC mode)
+#define ISM330BX_UI_OUTZ_L_A_DualC 0x34  // Gravity Z-axis low byte
+#define ISM330BX_UI_OUTZ_H_A_DualC 0x35  // Gravity Z-axis high byte
+#define ISM330BX_UI_OUTY_L_A_DualC 0x36  // Gravity Y-axis low byte
+#define ISM330BX_UI_OUTY_H_A_DualC 0x37  // Gravity Y-axis high byte
+#define ISM330BX_UI_OUTX_L_A_DualC 0x38  // Gravity X-axis low byte
+#define ISM330BX_UI_OUTX_H_A_DualC 0x39  // Gravity X-axis high byte
 
 // ISM330BX WHO_AM_I expected value
 #define ISM330BX_WHO_AM_I_EXPECTED 0x71
@@ -47,6 +59,9 @@ class ISM330BXSensor {
     ISM330BXStatusTypeDef readReg(uint8_t reg, uint8_t *data);
     ISM330BXStatusTypeDef writeReg(uint8_t reg, uint8_t data);
     
+    ISM330BXStatusTypeDef enableSensorFusion();
+    ISM330BXStatusTypeDef readGravityVector(int32_t *gravityVector);
+    bool checkGravityDataReady();
     bool checkDataReady();
     bool checkGyroDataReady();
     

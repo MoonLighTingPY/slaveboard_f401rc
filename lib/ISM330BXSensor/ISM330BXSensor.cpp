@@ -258,3 +258,77 @@ ISM330BXStatusTypeDef ISM330BXSensor::readReg(uint8_t reg, uint8_t *data) {
 ISM330BXStatusTypeDef ISM330BXSensor::writeReg(uint8_t reg, uint8_t data) {
   return writeRegDirect(reg, data);
 }
+
+
+ISM330BXStatusTypeDef ISM330BXSensor::enableSensorFusion() {
+  Serial.println("Enabling sensor fusion for gravity vector...");
+  
+  // Check current status first
+  uint8_t current_value = 0;
+  if (readRegDirect(ISM330BX_EMB_FUNC_EN_A, &current_value) == ISM330BX_STATUS_OK) {
+    Serial.print("Current EMB_FUNC_EN_A value: 0x");
+    Serial.println(current_value, HEX);
+  }
+  
+  // Enable sensor fusion by setting SFLP_GAME_EN bit
+  ISM330BXStatusTypeDef result = writeRegDirect(ISM330BX_EMB_FUNC_EN_A, current_value | ISM330BX_SFLP_GAME_EN);
+  
+  if (result == ISM330BX_STATUS_OK) {
+    Serial.println("Sensor fusion enabled successfully");
+    
+    // Initialize sensor fusion
+    result = writeRegDirect(ISM330BX_EMB_FUNC_INIT_A, ISM330BX_SFLP_GAME_INIT);
+    if (result == ISM330BX_STATUS_OK) {
+      Serial.println("Sensor fusion initialized successfully");
+    } else {
+      Serial.println("Failed to initialize sensor fusion");
+    }
+  } else {
+    Serial.println("Failed to enable sensor fusion");
+  }
+  
+  return result;
+}
+
+// Check if gravity vector data is ready
+bool ISM330BXSensor::checkGravityDataReady() {
+  // We can use the same status register as for accelerometer data
+  uint8_t status = 0;
+  
+  if (readRegDirect(ISM330BX_STATUS_REG, &status) != ISM330BX_STATUS_OK) {
+    return false;
+  }
+  
+  // XLDA bit (bit 0) indicates accelerometer data ready
+  // Since gravity is derived from accelerometer, we can use this bit
+  return (status & 0x01) != 0;
+}
+
+// Read gravity vector data
+ISM330BXStatusTypeDef ISM330BXSensor::readGravityVector(int32_t *gravityVector) {
+  uint8_t data[6];
+  
+  // Read all 6 registers in sequence for the gravity vector
+  ISM330BXStatusTypeDef result = readRegDirect(ISM330BX_UI_OUTZ_L_A_DualC, data, 6);
+  if (result != ISM330BX_STATUS_OK) {
+    Serial.println("Failed to read gravity vector data");
+    return result;
+  }
+  
+  // Combine high and low bytes for each axis
+  // Note: Register order is Z, Y, X according to the datasheet
+  int16_t rawZ = (int16_t)((data[1] << 8) | data[0]);
+  int16_t rawY = (int16_t)((data[3] << 8) | data[2]);
+  int16_t rawX = (int16_t)((data[5] << 8) | data[4]);
+  
+  // Apply scale factor - same as accelerometer since this is gravity
+  // The scale factor depends on your accelerometer range setting
+  float scale = 0.061f; // 0.061 mg/LSB for ±4g range
+  
+  // Convert to mg and store in output array
+  gravityVector[0] = (int32_t)(rawX * scale);
+  gravityVector[1] = (int32_t)(rawY * scale);
+  gravityVector[2] = (int32_t)(rawZ * scale);
+  
+  return ISM330BX_STATUS_OK;
+}

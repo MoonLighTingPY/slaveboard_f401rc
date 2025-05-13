@@ -6,21 +6,30 @@
 #include <semphr.h>
 #include <Wire.h>
 #include <ISM330BXSensor.h>
+#include <stdarg.h>
 
 #define STACK_SIZE 256 // Increased stack size for tasks
 #define MODBUS_BAUD 115200
 #define MODBUS_CONFIG SERIAL_8N1
 #define DEBUG_ENABLE 1 // Дебаг в серіал. Якщо поставити 0, то все пов'язане з дебагом не компілюється
-#define DEBUG_QUEUE_LENGTH 10
 #define DEBUG_MSG_SIZE 128
 
 
 #if DEBUG_ENABLE
-typedef struct {
-  char message[DEBUG_MSG_SIZE];
-} DebugMessage_t;
+static char oneShotDebugMsg[DEBUG_MSG_SIZE];
+static bool oneShotDebugMsgValid = false;
 
-QueueHandle_t debugQueue;
+// Use this everywhere instead of sendDebugMessage(...)
+void sendOneShotDebugMessage(const char* format, ...) {
+  va_list args;
+  va_start(args, format);
+  vsnprintf(oneShotDebugMsg, DEBUG_MSG_SIZE, format, args);
+  va_end(args);
+  oneShotDebugMsgValid = true;
+}
+#else
+// no-op when debugging is disabled
+inline void sendOneShotDebugMessage(const char*, ...) {}
 #endif 
 
 // Піни
@@ -98,7 +107,6 @@ void setup() {
     delay(10);
   } 
   delay(100);
-  debugQueue = xQueueCreate(DEBUG_QUEUE_LENGTH, sizeof(DebugMessage_t));
   #endif
   
   Serial1.begin(MODBUS_BAUD, MODBUS_CONFIG); // Modbus RTU
@@ -238,25 +246,12 @@ void setup() {
 void loop() {
 }
 
-void sendDebugMessage(const char* format, ...) {
-  #if DEBUG_ENABLE
-  DebugMessage_t debugMsg;
-  va_list args;
-  va_start(args, format);
-  vsnprintf(debugMsg.message, DEBUG_MSG_SIZE, format, args);
-  va_end(args);
-  
-  // Send to queue with a short timeout
-  xQueueSend(debugQueue, &debugMsg, pdMS_TO_TICKS(5));
-  #endif
-  
-}
+
 
 #if DEBUG_ENABLE
 void debugTask(void *pvParameters) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = pdMS_TO_TICKS(500);
-  DebugMessage_t receivedMsg;
   
   xLastWakeTime = xTaskGetTickCount();
   
@@ -273,20 +268,6 @@ void debugTask(void *pvParameters) {
       Serial.print("/"); Serial.print(lastReloadSignal); 
       Serial.print(" Counter Sensor="); Serial.print(counterSensor);
       Serial.print("/"); Serial.println(lastCounterSensor);
-    
-      // IMU data
-      int32_t accel[3], gyro[3];
-      if (imu.checkDataReady()) {
-        imu.readAcceleration(accel);
-        imu.readGyroscope(gyro);
-        
-        Serial.print("Accel X: "); Serial.print(accel[0]);
-        Serial.print(" Y: "); Serial.print(accel[1]);
-        Serial.print(" Z: "); Serial.print(accel[2]);
-        Serial.print(" | Gyro X: "); Serial.print(gyro[0]);
-        Serial.print(" Y: "); Serial.print(gyro[1]);
-        Serial.print(" Z: "); Serial.println(gyro[2]);
-      }
       
       Serial.print("D INPUTS: ");
       for (int i = 0; i < NUM_DISCRETE_INPUTS; i++) {
@@ -317,8 +298,9 @@ void debugTask(void *pvParameters) {
     }
     
     // Process custom messages from queue
-    while (xQueueReceive(debugQueue, &receivedMsg, 0) == pdTRUE) {
-      Serial.println(receivedMsg.message);
+    if (oneShotDebugMsgValid) {
+        Serial.println(oneShotDebugMsg);
+        oneShotDebugMsgValid = false;
     }
     
     Serial.println("-------------------------");
@@ -468,11 +450,9 @@ void motorControlTask(void *pvParameters) {
 
 // IMU sensor task for STEVAL-MKI245KA (ISM330BX)
 void imuTask(void *pvParameters) {
-
-    
     TickType_t xLastWakeTime;
     const TickType_t xFrequency = pdMS_TO_TICKS(10); // 100Hz sampling
-    int32_t acceleration[3], angularRate[3];
+    int32_t acceleration[3], angularRate[3], gravityVector[3];
     
     // Wait a bit for system to stabilize
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -483,20 +463,20 @@ void imuTask(void *pvParameters) {
     
     // Initialize the sensor with custom ISM330BX driver
     if (imu.begin() != ISM330BX_STATUS_OK) {
-    #if DEBUG_ENABLE
-    Serial.println("Error initializing ISM330BX");
-    #endif
-    delay(1000); // Wait and try again a couple of times
-    if (imu.begin() != ISM330BX_STATUS_OK) {
         #if DEBUG_ENABLE
-        Serial.println("Second attempt failed, aborting IMU task");
+        Serial.println("Error initializing ISM330BX");
         #endif
-        vTaskDelete(NULL);
+        delay(1000); // Wait and try again
+        if (imu.begin() != ISM330BX_STATUS_OK) {
+            #if DEBUG_ENABLE
+            Serial.println("Second attempt failed, aborting IMU task");
+            #endif
+            vTaskDelete(NULL);
+        }
     }
-}
     
-    imu.enableAccelerometer();
     imu.enableGyroscope();
+    imu.enableSensorFusion(); // Enable sensor fusion for gravity vector
     
     #if DEBUG_ENABLE
     Serial.println("ISM330BX initialization complete!");
@@ -508,18 +488,29 @@ void imuTask(void *pvParameters) {
     for(;;) {
         // Read sensor data when available
         if (imu.checkDataReady()) {
-            imu.readAcceleration(acceleration);
             imu.readGyroscope(angularRate);
             
+            // Read gravity vector when available
+            if (imu.checkGravityDataReady()) {
+                imu.readGravityVector(gravityVector);
+                #if DEBUG_ENABLE
+                sendOneShotDebugMessage("Gravity Vector: X=%ld, Y=%ld, Z=%ld (mg)",
+                                        gravityVector[0],
+                                        gravityVector[1],
+                                        gravityVector[2]);
+                #endif
+                
+            }
+                
             // Update Modbus registers with the data
             if (xSemaphoreTake(modbusRegisterMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                // Store in input registers for Modbus access
-                holdingRegisters[2] = abs(angularRate[0]) > 32767 ? 32767 : abs(angularRate[0]);
-                holdingRegisters[3] = abs(angularRate[1]) > 32767 ? 32767 : abs(angularRate[1]);
-                holdingRegisters[4] = abs(angularRate[2]) > 32767 ? 32767 : abs(angularRate[2]);
+
+                holdingRegisters[2] = gravityVector[0];
+                holdingRegisters[3] = gravityVector[1];
+                holdingRegisters[4] = gravityVector[2];
+                
                 
                 xSemaphoreGive(modbusRegisterMutex);
-                
             }
         }
         
