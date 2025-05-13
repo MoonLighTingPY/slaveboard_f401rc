@@ -44,8 +44,8 @@ ISM330BXSensor imu(&i2c, 0x6A); // Global IMU instance (SD0 to GND)
 // Modbus змінні
 const uint8_t NUM_COILS = 4;
 const uint8_t NUM_DISCRETE_INPUTS = 4;
-const uint8_t NUM_HOLDING_REGISTERS = 4;
-const uint8_t NUM_INPUT_REGISTERS = 3;
+const uint8_t NUM_HOLDING_REGISTERS = 5;
+const uint8_t NUM_INPUT_REGISTERS = 6;
 
 uint8_t modbusSlaveAddress = 3; // Адреса Modbus слейва
 bool coils[NUM_COILS]; // Масив котушок
@@ -324,6 +324,7 @@ void modbusTask(void *pvParameters) {
   
   for(;;) {
     modbus.poll();
+    
     
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
