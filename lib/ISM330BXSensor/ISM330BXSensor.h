@@ -9,6 +9,7 @@
 #define ISM330BX_CTRL1_XL          0x10  // Accelerometer control register
 #define ISM330BX_CTRL2_G           0x11  // Gyroscope control register
 #define ISM330BX_CTRL3_C           0x12  // Control register 3
+#define ISM330BX_CTRL7             0x16  // Control register 7
 #define ISM330BX_STATUS_REG        0x1E  // Status data register
 #define ISM330BX_OUTX_L_G          0x22  // Gyroscope X-axis low byte
 #define ISM330BX_OUTX_H_G          0x23  // Gyroscope X-axis high byte
@@ -47,6 +48,7 @@ class ISM330BXSensor {
     ISM330BXStatusTypeDef writeReg(uint8_t reg, uint8_t data);
     
     bool checkDataReady();
+    bool checkGyroDataReady();
     
   private:
     TwoWire *_i2c;

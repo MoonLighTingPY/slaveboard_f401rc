@@ -74,12 +74,33 @@ ISM330BXStatusTypeDef ISM330BXSensor::enableAccelerometer() {
 }
 
 // Enable gyroscope
+// In ISM330BXSensor.cpp - enableGyroscope() function
 ISM330BXStatusTypeDef ISM330BXSensor::enableGyroscope() {
-  // Set ODR (104 Hz) and FS (2000dps)
-  uint8_t ctrl2_g = 0x4C; // 0x40 (104Hz) | 0x0C (2000dps)
+  // Try a stronger ODR and range setting
+  uint8_t ctrl2_g = 0x50 | 0x0C; // 0x50 (208Hz) | 0x0C (2000dps)
+  
+  // Read current value first
+  uint8_t current_value = 0;
+  if (readRegDirect(ISM330BX_CTRL2_G, &current_value) == ISM330BX_STATUS_OK) {
+    Serial.print("Current CTRL2_G value: 0x"); Serial.println(current_value, HEX);
+  }
+  
   ISM330BXStatusTypeDef result = writeRegDirect(ISM330BX_CTRL2_G, ctrl2_g);
   if (result == ISM330BX_STATUS_OK) {
-    Serial.println("Gyroscope enabled successfully");
+    Serial.println("Gyroscope enabled with higher settings");
+    
+    // Verify the write
+    uint8_t verify_value = 0;
+    if (readRegDirect(ISM330BX_CTRL2_G, &verify_value) == ISM330BX_STATUS_OK) {
+      Serial.print("Verified CTRL2_G value: 0x"); Serial.println(verify_value, HEX);
+      if (verify_value != ctrl2_g) {
+        Serial.println("WARNING: Gyroscope settings weren't applied correctly!");
+      }
+    }
+    
+    // Enable HP filter for gyroscope - might help with zero drift
+    uint8_t ctrl7 = 0x00 | 0x40; // Set high-pass filter
+    writeRegDirect(ISM330BX_CTRL7, 0x40);
   } else {
     Serial.println("Failed to enable gyroscope");
   }
@@ -120,6 +141,17 @@ ISM330BXStatusTypeDef ISM330BXSensor::readAcceleration(int32_t *acceleration) {
   return ISM330BX_STATUS_OK;
 }
 
+bool ISM330BXSensor::checkGyroDataReady() {
+  uint8_t status = 0;
+  
+  if (readRegDirect(ISM330BX_STATUS_REG, &status) != ISM330BX_STATUS_OK) {
+    return false;
+  }
+  
+  Serial.print("Status register: 0x"); Serial.println(status, HEX);
+  return (status & 0x02) != 0; // Check only GDA bit (bit 1)
+}
+
 // Read gyroscope data
 ISM330BXStatusTypeDef ISM330BXSensor::readGyroscope(int32_t *angularRate) {
   uint8_t data[6];
@@ -127,8 +159,10 @@ ISM330BXStatusTypeDef ISM330BXSensor::readGyroscope(int32_t *angularRate) {
   // Read all 6 registers in sequence
   ISM330BXStatusTypeDef result = readRegDirect(ISM330BX_OUTX_L_G, data, 6);
   if (result != ISM330BX_STATUS_OK) {
+    Serial.println("Failed to read gyroscope data");
     return result;
   }
+  
   
   // Combine high and low bytes and apply scale factor (70 mdps/LSB for 2000dps range)
   int16_t rawX = (int16_t)((data[1] << 8) | data[0]);

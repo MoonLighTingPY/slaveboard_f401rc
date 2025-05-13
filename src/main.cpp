@@ -8,7 +8,7 @@
 #include <ISM330BXSensor.h>
 
 #define STACK_SIZE 256 // Increased stack size for tasks
-#define DEBUG_ENABLE 1 // Дебаг в серіал. Якщо поставити 0, то все пов'язане з дебагом не компілюється
+#define DEBUG_ENABLE 0 // Дебаг в серіал. Якщо поставити 0, то все пов'язане з дебагом не компілюється
 
 #define MODBUS_BAUD 115200
 #define MODBUS_CONFIG SERIAL_8N1
@@ -449,12 +449,9 @@ void imuTask(void *pvParameters) {
             // Update Modbus registers with the data
             if (xSemaphoreTake(modbusRegisterMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
                 // Store in input registers for Modbus access
-                inputRegisters[0] = abs(acceleration[0]) > 32767 ? 32767 : abs(acceleration[0]);
-                inputRegisters[1] = abs(acceleration[1]) > 32767 ? 32767 : abs(acceleration[1]);
-                inputRegisters[2] = abs(acceleration[2]) > 32767 ? 32767 : abs(acceleration[2]);
-                inputRegisters[3] = abs(angularRate[0]) > 32767 ? 32767 : abs(angularRate[0]);
-                inputRegisters[4] = abs(angularRate[1]) > 32767 ? 32767 : abs(angularRate[1]);
-                inputRegisters[5] = abs(angularRate[2]) > 32767 ? 32767 : abs(angularRate[2]);
+                inputRegisters[2] = abs(angularRate[0]) > 32767 ? 32767 : abs(angularRate[0]);
+                inputRegisters[3] = abs(angularRate[1]) > 32767 ? 32767 : abs(angularRate[1]);
+                inputRegisters[4] = abs(angularRate[2]) > 32767 ? 32767 : abs(angularRate[2]);
                 
                 xSemaphoreGive(modbusRegisterMutex);
                 
