@@ -8,7 +8,7 @@
 #include <ISM330BXSensor.h>
 
 #define STACK_SIZE 256 // Increased stack size for tasks
-#define DEBUG_ENABLE 0 // Дебаг в серіал. Якщо поставити 0, то все пов'язане з дебагом не компілюється
+#define DEBUG_ENABLE 1 // Дебаг в серіал. Якщо поставити 0, то все пов'язане з дебагом не компілюється
 
 #define MODBUS_BAUD 115200
 #define MODBUS_CONFIG SERIAL_8N1
@@ -169,7 +169,7 @@ void setup() {
     "ModbusTask",
     STACK_SIZE,
     NULL,
-    3, // Найвища пріоритетність, бо Modbus повинен бути завжди активний
+    2, // Найвища пріоритетність, бо Modbus повинен бути завжди активний
     &modbusTaskHandle
   );
   
