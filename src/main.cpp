@@ -7,7 +7,7 @@
 #include <Wire.h>
 #include <ISM330DHCXSensor.h>
 
-#define STACK_SIZE 512 // Increased stack size for tasks
+#define STACK_SIZE 256 // Increased stack size for tasks
 #define DEBUG_ENABLE 1 // Дебаг в серіал. Якщо поставити 0, то все пов'язане з дебагом не компілюється
 
 #define MODBUS_BAUD 115200
@@ -30,7 +30,7 @@ ModbusRTUSlave modbus(Serial1, dePin);
 // I2C for IMU sensor - using PB7(SDA) and PB6(SCL)
 TwoWire i2c(PB7, PB6);
 // We'll use the ISM330DHCX driver but for ISM330BX sensor
-ISM330DHCXSensor AccGyr(&i2c, 0x6B); // Default I2C address - we'll try to auto-detect
+ISM330DHCXSensor AccGyr(&i2c, 0x6A); // Default I2C address - we'll try to auto-detect
 
 // Modbus змінні
 const uint8_t NUM_COILS = 4;
@@ -147,6 +147,11 @@ void setup() {
   // If IMU was found, update AccGyr with the found address
   if (imuFound && imuAddress != 0) {
     AccGyr = ISM330DHCXSensor(&i2c, imuAddress);
+    #if DEBUG_ENABLE
+    Serial.print("IMU Connected at address: 0x");
+    if (imuAddress < 16) Serial.print("0");
+    Serial.println(imuAddress, HEX);
+    #endif
   }
 
   // RS-485 driver enable pin
@@ -443,21 +448,9 @@ void imuTask(void *pvParameters) {
     // manual init for STEVAL-MKI245KA (ISM330BX)
     // ——————————————————————————————————————————————————
     
-    // 1) sw-reset + wait
-    AccGyr.WriteReg(ISM330DHCX_CTRL3_C, 0x01);
-    vTaskDelay(pdMS_TO_TICKS(50));
-    
-    // 2) enable auto-increment + block data update
-    //    CTRL3_C: IF_INC (bit2)=1, BDU (bit6)=1
-    AccGyr.WriteReg(ISM330DHCX_CTRL3_C, (1<<6)|(1<<2));
-    
-    // 3) set accel to 104 Hz, ±2 g
-    //    CTRL1_XL: ODR_XL[7:4]=0100b (104 Hz), FS_XL[3:2]=00b (±2 g)
-    AccGyr.WriteReg(ISM330DHCX_CTRL1_XL, (0x4<<4)|(0x0<<2));
-    
-    // 4) set gyro to 104 Hz, ±2000 dps
-    //    CTRL2_G: ODR_G[7:4]=0100b (104 Hz), FS_G[3:2]=11b (2000 dps)
-    AccGyr.WriteReg(ISM330DHCX_CTRL2_G, (0x4<<4)|(0x3<<2));
+    AccGyr.begin();
+    AccGyr.ACC_Enable();
+    AccGyr.GYRO_Enable();
     
     #if DEBUG_ENABLE
     // Read and verify the configuration
