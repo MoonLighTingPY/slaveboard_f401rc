@@ -299,6 +299,19 @@ void debugTask(void *pvParameters) {
         Serial.print(String(coils[i] ? "1, " : "0, "));
       }
       Serial.println();
+
+      Serial.print("HOLDING REGISTERS: ");
+      for (int i = 0; i < NUM_HOLDING_REGISTERS; i++) {
+        Serial.print(holdingRegisters[i]);
+        Serial.print(", ");
+      }
+      Serial.println();
+      Serial.print("INPUT REGISTERS: ");
+      for (int i = 0; i < NUM_INPUT_REGISTERS; i++) {
+        Serial.print(inputRegisters[i]);
+        Serial.print(", ");
+      }
+      Serial.println();
       
       xSemaphoreGive(modbusRegisterMutex);
     }
@@ -501,9 +514,9 @@ void imuTask(void *pvParameters) {
             // Update Modbus registers with the data
             if (xSemaphoreTake(modbusRegisterMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
                 // Store in input registers for Modbus access
-                inputRegisters[2] = abs(angularRate[0]) > 32767 ? 32767 : abs(angularRate[0]);
-                inputRegisters[3] = abs(angularRate[1]) > 32767 ? 32767 : abs(angularRate[1]);
-                inputRegisters[4] = abs(angularRate[2]) > 32767 ? 32767 : abs(angularRate[2]);
+                holdingRegisters[2] = abs(angularRate[0]) > 32767 ? 32767 : abs(angularRate[0]);
+                holdingRegisters[3] = abs(angularRate[1]) > 32767 ? 32767 : abs(angularRate[1]);
+                holdingRegisters[4] = abs(angularRate[2]) > 32767 ? 32767 : abs(angularRate[2]);
                 
                 xSemaphoreGive(modbusRegisterMutex);
                 
