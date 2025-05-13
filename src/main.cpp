@@ -8,10 +8,20 @@
 #include <ISM330BXSensor.h>
 
 #define STACK_SIZE 256 // Increased stack size for tasks
-#define DEBUG_ENABLE 1 // Дебаг в серіал. Якщо поставити 0, то все пов'язане з дебагом не компілюється
-
 #define MODBUS_BAUD 115200
 #define MODBUS_CONFIG SERIAL_8N1
+#define DEBUG_ENABLE 1 // Дебаг в серіал. Якщо поставити 0, то все пов'язане з дебагом не компілюється
+#define DEBUG_QUEUE_LENGTH 10
+#define DEBUG_MSG_SIZE 128
+
+
+#if DEBUG_ENABLE
+typedef struct {
+  char message[DEBUG_MSG_SIZE];
+} DebugMessage_t;
+
+QueueHandle_t debugQueue;
+#endif 
 
 // Піни
 const int16_t sensorPins[4] = {PC3, PC2, PC1, PC0}; // Інпути сенсорів
@@ -88,6 +98,7 @@ void setup() {
     delay(10);
   } 
   delay(100);
+  debugQueue = xQueueCreate(DEBUG_QUEUE_LENGTH, sizeof(DebugMessage_t));
   #endif
   
   Serial1.begin(MODBUS_BAUD, MODBUS_CONFIG); // Modbus RTU
@@ -227,19 +238,56 @@ void setup() {
 void loop() {
 }
 
+void sendDebugMessage(const char* format, ...) {
+  #if DEBUG_ENABLE
+  DebugMessage_t debugMsg;
+  va_list args;
+  va_start(args, format);
+  vsnprintf(debugMsg.message, DEBUG_MSG_SIZE, format, args);
+  va_end(args);
+  
+  // Send to queue with a short timeout
+  xQueueSend(debugQueue, &debugMsg, pdMS_TO_TICKS(5));
+  #endif
+  
+}
+
 #if DEBUG_ENABLE
 void debugTask(void *pvParameters) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = pdMS_TO_TICKS(500);
+  DebugMessage_t receivedMsg;
+  
   xLastWakeTime = xTaskGetTickCount();
   
   for(;;) {
-    if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
-      Serial.println("STATUS: MB Addr=" + String(modbusSlaveAddress) + " BulletCount=" + String(bulletCounter));
-      Serial.println("Reload Sensor=" + String(reloadSensor) + "/" + String(lastReloadSensor) + 
-                    " Reload Signal=" + String(reloadSignal) + "/" + String(lastReloadSignal) + 
-                    " Counter Sensor=" + String(counterSensor) + "/" + String(lastCounterSensor));
+    // Process regular status info
+    if (xSemaphoreTake(modbusRegisterMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      Serial.println("------- DEBUG INFO -------");
+      Serial.print("STATUS: MB Addr="); Serial.print(modbusSlaveAddress);
+      Serial.print(" BulletCount="); Serial.println(bulletCounter);
+      
+      Serial.print("Reload Sensor="); Serial.print(reloadSensor); 
+      Serial.print("/"); Serial.print(lastReloadSensor);
+      Serial.print(" Reload Signal="); Serial.print(reloadSignal);
+      Serial.print("/"); Serial.print(lastReloadSignal); 
+      Serial.print(" Counter Sensor="); Serial.print(counterSensor);
+      Serial.print("/"); Serial.println(lastCounterSensor);
     
+      // IMU data
+      int32_t accel[3], gyro[3];
+      if (imu.checkDataReady()) {
+        imu.readAcceleration(accel);
+        imu.readGyroscope(gyro);
+        
+        Serial.print("Accel X: "); Serial.print(accel[0]);
+        Serial.print(" Y: "); Serial.print(accel[1]);
+        Serial.print(" Z: "); Serial.print(accel[2]);
+        Serial.print(" | Gyro X: "); Serial.print(gyro[0]);
+        Serial.print(" Y: "); Serial.print(gyro[1]);
+        Serial.print(" Z: "); Serial.println(gyro[2]);
+      }
+      
       Serial.print("D INPUTS: ");
       for (int i = 0; i < NUM_DISCRETE_INPUTS; i++) {
         Serial.print(String(discreteInputs[i] ? "1, " : "0, "));
@@ -251,10 +299,16 @@ void debugTask(void *pvParameters) {
         Serial.print(String(coils[i] ? "1, " : "0, "));
       }
       Serial.println();
-      Serial.println("----"); 
-
+      
       xSemaphoreGive(modbusRegisterMutex);
     }
+    
+    // Process custom messages from queue
+    while (xQueueReceive(debugQueue, &receivedMsg, 0) == pdTRUE) {
+      Serial.println(receivedMsg.message);
+    }
+    
+    Serial.println("-------------------------");
     
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
@@ -400,10 +454,7 @@ void motorControlTask(void *pvParameters) {
 
 // IMU sensor task for STEVAL-MKI245KA (ISM330BX)
 void imuTask(void *pvParameters) {
-    
-    #if DEBUG_ENABLE
-    Serial.println("IMU task started");
-    #endif
+
     
     TickType_t xLastWakeTime;
     const TickType_t xFrequency = pdMS_TO_TICKS(10); // 100Hz sampling
@@ -455,17 +506,6 @@ void imuTask(void *pvParameters) {
                 
                 xSemaphoreGive(modbusRegisterMutex);
                 
-                #if DEBUG_ENABLE
-                static uint32_t debug_counter = 0;
-                if (debug_counter++ % 50 == 0) {
-                    Serial.print("Accel X: "); Serial.print(acceleration[0]);
-                    Serial.print(" Y: "); Serial.print(acceleration[1]);
-                    Serial.print(" Z: "); Serial.print(acceleration[2]);
-                    Serial.print(" | Gyro X: "); Serial.print(angularRate[0]);
-                    Serial.print(" Y: "); Serial.print(angularRate[1]);
-                    Serial.print(" Z: "); Serial.println(angularRate[2]);
-                }
-                #endif
             }
         }
         
