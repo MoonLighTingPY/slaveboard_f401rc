@@ -87,6 +87,7 @@ class ISM330BXSensor {
     ISM330BXStatusTypeDef readAcceleration(int32_t *acceleration);
     ISM330BXStatusTypeDef readGyroscope(int32_t *angularRate);
     ISM330BXStatusTypeDef readGravityVector(int32_t *gravityVector);
+    ISM330BXStatusTypeDef readRawGravityVector(int32_t *gravityVector);
 
     ISM330BXStatusTypeDef readReg(uint8_t reg, uint8_t *data);
     ISM330BXStatusTypeDef writeReg(uint8_t reg, uint8_t data);

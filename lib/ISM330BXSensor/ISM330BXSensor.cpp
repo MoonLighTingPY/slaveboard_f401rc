@@ -369,80 +369,123 @@ ISM330BXStatusTypeDef ISM330BXSensor::readQuaternion(float *quat) {
 }
 
 // Set the current orientation as reference (zero) position
-// Set the current orientation as reference (zero) position
 bool ISM330BXSensor::setGravityReference() {
-  int32_t gravityVector[3];
+  int32_t rawGravityVector[3];
   
   // Read the current gravity vector
-  if (readGravityVector(gravityVector) != ISM330BX_STATUS_OK) {
+  if (readRawGravityVector(rawGravityVector) != ISM330BX_STATUS_OK) {
     Serial.println("Failed to read gravity vector for reference");
     return false;
   }
   
-  // Calculate rotation needed to transform current gravity to [0,0,1000]
-  float currentNorm = sqrt(gravityVector[0]*gravityVector[0] + 
-                           gravityVector[1]*gravityVector[1] + 
-                           gravityVector[2]*gravityVector[2]);
+  // Print current gravity values for debugging
+   Serial.print("Current raw gravity before reset: X=");
+  Serial.print(rawGravityVector[0]);
+  Serial.print(", Y=");
+  Serial.print(rawGravityVector[1]);
+  Serial.print(", Z=");
+  Serial.println(rawGravityVector[2]);
   
-  if (currentNorm < 10.0f) { // Prevent division by zero or very small values
+  // Calculate magnitude of gravity vector
+  float currentNorm = sqrt(rawGravityVector[0]*rawGravityVector[0] + 
+                          rawGravityVector[1]*rawGravityVector[1] + 
+                          rawGravityVector[2]*rawGravityVector[2]);
+  
+  if (currentNorm < 100.0f) { // Prevent division by zero or very small values
     Serial.println("Gravity vector magnitude too small");
     return false;
   }
   
-  // Normalize the gravity vector
-  float gx = gravityVector[0] / currentNorm;
-  float gy = gravityVector[1] / currentNorm;
-  float gz = gravityVector[2] / currentNorm;
+  // Direction we want gravity to point (typically +Z)
+  float targetX = 0.0f;
+  float targetY = 0.0f;
+  float targetZ = 1.0f; // +Z direction
   
-  // Default gravity vector (unit vector in Z direction)
-  float defaultGx = 0.0f;
-  float defaultGy = 0.0f;
-  float defaultGz = 1.0f;
+  // Current gravity direction (normalized)
+  float gx = rawGravityVector[0] / currentNorm;
+  float gy = rawGravityVector[1] / currentNorm;
+  float gz = rawGravityVector[2] / currentNorm;
   
-  // Calculate rotation axis and angle using cross product
-  float crossX = gy * defaultGz - gz * defaultGy;
-  float crossY = gz * defaultGx - gx * defaultGz;
-  float crossZ = gx * defaultGy - gy * defaultGx;
   
-  float crossMag = sqrt(crossX*crossX + crossY*crossY + crossZ*crossZ);
-  
-  // If vectors are nearly parallel, use simpler method
-  if (crossMag < 0.001f) {
-    if (gz > 0.999f) { // Already aligned with Z
-      _referenceQuat[0] = 0.0f;
-      _referenceQuat[1] = 0.0f;
-      _referenceQuat[2] = 0.0f;
-      _referenceQuat[3] = 1.0f;
-    } else { // Anti-parallel, rotate 180° around X
-      _referenceQuat[0] = 1.0f;
-      _referenceQuat[1] = 0.0f;
-      _referenceQuat[2] = 0.0f;
-      _referenceQuat[3] = 0.0f;
-    }
-  } else {
-    // Normalize the cross product
-    crossX /= crossMag;
-    crossY /= crossMag;
-    crossZ /= crossMag;
-    
-    // Calculate the rotation angle (dot product)
-    float dotProduct = gx * defaultGx + gy * defaultGy + gz * defaultGz;
-    float angle = acos(constrain(dotProduct, -1.0f, 1.0f));
-    
-    // Create quaternion from axis-angle
-    float halfAngle = angle * 0.5f;
-    float sinHalfAngle = sin(halfAngle);
-    
-    _referenceQuat[0] = crossX * sinHalfAngle;
-    _referenceQuat[1] = crossY * sinHalfAngle;
-    _referenceQuat[2] = crossZ * sinHalfAngle;
-    _referenceQuat[3] = cos(halfAngle);
+  // Check if current direction is already very close to target
+    // Check if current direction is already very close to target
+  float dotProduct = gx * targetX + gy * targetY + gz * targetZ;
+  if (dotProduct > 0.999f) {
+    // Already pointing in the right direction, use identity quaternion
+    _referenceQuat[0] = 0.0f;
+    _referenceQuat[1] = 0.0f;
+    _referenceQuat[2] = 0.0f;
+    _referenceQuat[3] = 1.0f;
+    _hasReferenceQuat = true;
+    Serial.println("Already aligned with target, using identity quaternion");
+    return true;
   }
+  
+  // For perfectly anti-parallel case (dotProduct close to -1)
+  if (dotProduct < -0.999f) {
+    // Rotate 180° around X axis
+    _referenceQuat[0] = 1.0f;
+    _referenceQuat[1] = 0.0f;
+    _referenceQuat[2] = 0.0f;
+    _referenceQuat[3] = 0.0f;
+    _hasReferenceQuat = true;
+    Serial.println("Anti-parallel to target, using 180° X-axis rotation");
+    return true;
+  }
+  
+  // Calculate rotation axis (cross product)
+  float crossX = gy * targetZ - gz * targetY;
+  float crossY = gz * targetX - gx * targetZ;
+  float crossZ = gx * targetY - gy * targetX;
+  
+  // Normalize rotation axis
+  float crossMag = sqrt(crossX*crossX + crossY*crossY + crossZ*crossZ);
+  if (crossMag < 0.001f) {
+    Serial.println("Cross product too small, can't determine rotation axis");
+    return false;
+  }
+  
+  crossX /= crossMag;
+  crossY /= crossMag;
+  crossZ /= crossMag;
+  
+  // Calculate rotation angle and build quaternion
+  float angle = acos(constrain(dotProduct, -1.0f, 1.0f));
+  float halfAngle = angle * 0.5f;
+  float sinHalfAngle = sin(halfAngle);
+  
+  _referenceQuat[0] = crossX * sinHalfAngle;
+  _referenceQuat[1] = crossY * sinHalfAngle;
+  _referenceQuat[2] = crossZ * sinHalfAngle;
+  _referenceQuat[3] = cos(halfAngle);
+  
+  // Ensure quaternion is normalized
+  float qNorm = sqrt(_referenceQuat[0]*_referenceQuat[0] + 
+                    _referenceQuat[1]*_referenceQuat[1] + 
+                    _referenceQuat[2]*_referenceQuat[2] + 
+                    _referenceQuat[3]*_referenceQuat[3]);
+  
+  _referenceQuat[0] /= qNorm;
+  _referenceQuat[1] /= qNorm;
+  _referenceQuat[2] /= qNorm;
+  _referenceQuat[3] /= qNorm;
+  
+  // Print quaternion for debugging
+  Serial.print("Quaternion: X=");
+  Serial.print(_referenceQuat[0], 6);
+  Serial.print(", Y=");
+  Serial.print(_referenceQuat[1], 6);
+  Serial.print(", Z=");
+  Serial.print(_referenceQuat[2], 6);
+  Serial.print(", W=");
+  Serial.println(_referenceQuat[3], 6);
   
   _hasReferenceQuat = true;
   Serial.println("Gravity reference set successfully");
   return true;
 }
+
+
 
 
 // Apply the gravity reference to transform the gravity vector
@@ -490,28 +533,69 @@ void ISM330BXSensor::quaternionInverse(const float *q, float *qInv) {
   }
 }
 
-// Rotate a vector by a quaternion
+// Improved quaternion rotation function
 void ISM330BXSensor::quaternionRotate(const float *q, const float *v, float *vOut) {
-  // qv = [0, v]
-  float qv[4] = {v[0], v[1], v[2], 0.0f};
-  float temp[4];
+  // More numerically stable quaternion rotation implementation
   
-  // temp = q * qv
-  temp[0] = q[3]*qv[0] + q[1]*qv[2] - q[2]*qv[1];
-  temp[1] = q[3]*qv[1] + q[2]*qv[0] - q[0]*qv[2];
-  temp[2] = q[3]*qv[2] + q[0]*qv[1] - q[1]*qv[0];
-  temp[3] = -q[0]*qv[0] - q[1]*qv[1] - q[2]*qv[2];
+  // Calculate quaternion rotation: q * v * q^(-1)
+  // Using optimized formula to avoid full quaternion multiplication
   
-  // qinv = conjugate of q (since q is normalized)
-  float qinv[4] = {-q[0], -q[1], -q[2], q[3]};
+  float qw = q[3];
+  float qx = q[0];
+  float qy = q[1];
+  float qz = q[2];
+  float vx = v[0];
+  float vy = v[1];
+  float vz = v[2];
   
-  // vOut = temp * qinv (only vector part)
-  vOut[0] = temp[0]*qinv[3] + temp[3]*qinv[0] + temp[1]*qinv[2] - temp[2]*qinv[1];
-  vOut[1] = temp[1]*qinv[3] + temp[3]*qinv[1] + temp[2]*qinv[0] - temp[0]*qinv[2];
-  vOut[2] = temp[2]*qinv[3] + temp[3]*qinv[2] + temp[0]*qinv[1] - temp[1]*qinv[0];
+  // Pre-compute some common terms
+  float qw2 = qw * qw;
+  float qx2 = qx * qx;
+  float qy2 = qy * qy;
+  float qz2 = qz * qz;
+  
+  float qwx = qw * qx;
+  float qwy = qw * qy;
+  float qwz = qw * qz;
+  float qxy = qx * qy;
+  float qxz = qx * qz;
+  float qyz = qy * qz;
+  
+  // Optimized rotation calculation
+  vOut[0] = vx * (qw2 + qx2 - qy2 - qz2) + 
+            vy * 2 * (qxy - qwz) + 
+            vz * 2 * (qxz + qwy);
+            
+  vOut[1] = vx * 2 * (qxy + qwz) + 
+            vy * (qw2 - qx2 + qy2 - qz2) + 
+            vz * 2 * (qyz - qwx);
+            
+  vOut[2] = vx * 2 * (qxz - qwy) + 
+            vy * 2 * (qyz + qwx) + 
+            vz * (qw2 - qx2 - qy2 + qz2);
 }
 
-// Read gravity vector data
+
+ISM330BXStatusTypeDef ISM330BXSensor::readRawGravityVector(int32_t *gravityVector) {
+  uint8_t data[6];
+  auto result = readRegDirect(ISM330BX_UI_OUTZ_L_A_DualC, data, 6);
+  if (result != ISM330BX_STATUS_OK) {
+    Serial.println("Failed to read raw gravity vector data");
+    return result;
+  }
+  
+  int16_t rawZ = (int16_t)((data[1] << 8) | data[0]);
+  int16_t rawY = (int16_t)((data[3] << 8) | data[2]);
+  int16_t rawX = (int16_t)((data[5] << 8) | data[4]);
+
+  const float scale = 0.488f; // mg per LSB
+  gravityVector[0] = (int32_t)round(rawX * scale);
+  gravityVector[1] = (int32_t)round(rawY * scale);
+  gravityVector[2] = (int32_t)round(rawZ * scale);
+  
+  return ISM330BX_STATUS_OK;
+}
+
 // Read gravity vector data with reference correction
 ISM330BXStatusTypeDef ISM330BXSensor::readGravityVector(int32_t *gravityVector) {
   uint8_t data[6];
@@ -520,23 +604,41 @@ ISM330BXStatusTypeDef ISM330BXSensor::readGravityVector(int32_t *gravityVector) 
     Serial.println("Failed to read gravity vector data");
     return result;
   }
+  
   int16_t rawZ = (int16_t)((data[1] << 8) | data[0]);
   int16_t rawY = (int16_t)((data[3] << 8) | data[2]);
   int16_t rawX = (int16_t)((data[5] << 8) | data[4]);
 
-  const float scale = 0.488f;       // mg per LSB
+  const float scale = 0.488f; // mg per LSB
   gravityVector[0] = (int32_t)round(rawX * scale);
   gravityVector[1] = (int32_t)round(rawY * scale);
   gravityVector[2] = (int32_t)round(rawZ * scale);
   
   // Apply reference quaternion if set
   if (_hasReferenceQuat) {
-    applyGravityReference(gravityVector);
+    // Store original magnitude
+    float originalMag = sqrt(gravityVector[0]*gravityVector[0] + 
+                            gravityVector[1]*gravityVector[1] + 
+                            gravityVector[2]*gravityVector[2]);
+                            
+    // Apply rotation
+    float vecFloat[3] = {(float)gravityVector[0], (float)gravityVector[1], (float)gravityVector[2]};
+    float vecRotated[3];
+    quaternionRotate(_referenceQuat, vecFloat, vecRotated);
+    
+    // Preserve original magnitude
+    float rotatedMag = sqrt(vecRotated[0]*vecRotated[0] + 
+                            vecRotated[1]*vecRotated[1] + 
+                            vecRotated[2]*vecRotated[2]);
+    
+    if (rotatedMag > 0.0001f) {
+      float scaleFactor = originalMag / rotatedMag;
+      for (int i = 0; i < 3; i++) {
+        vecRotated[i] *= scaleFactor;
+        gravityVector[i] = (int32_t)round(vecRotated[i]);
+      }
+    }
   }
 
   return ISM330BX_STATUS_OK;
-}
-
-void ISM330BXSensor::setGravityZero() {
-  setGravityReference();
 }
