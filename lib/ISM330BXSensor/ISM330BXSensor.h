@@ -10,6 +10,7 @@
 #define ISM330BX_CTRL3_C           0x12  // Control register 3
 #define ISM330BX_CTRL7             0x16  // Control register 7
 #define ISM330BX_CTRL6_G           0x15 // Gyroscope control register 6 (for Full Scale)
+#define ISM330BX_CTRL8_XL          0x17  // Control register 8
 #define ISM330BX_FUNC_CFG_ACCESS   0x01
 #define ISM330BX_STATUS_REG        0x1E  // Status data register
 #define ISM330BX_OUTX_L_G          0x22  // Gyroscope X-axis low byte
@@ -35,6 +36,7 @@
 
 #define ISM330BX_FIFO_DATA_OUT_TAG 0x78
 #define ISM330BX_FIFO_CTRL1        0x07
+#define ISM330BX_FIFO_CTRL2        0x08
 #define ISM330BX_FIFO_CTRL3        0x09
 #define ISM330BX_FIFO_CTRL4        0x0A
 #define ISM330BX_FIFO_STATUS1      0x1B
@@ -54,11 +56,15 @@
 
 #define ISM330BX_SFLP_GAME_EN      0x01  // Bit 0 of EMB_FUNC_EN_A register
 #define ISM330BX_SFLP_GAME_INIT    0x01  // Bit 0 of EMB_FUNC_INIT_A register
+#define ISM330BX_SFLP_ODR            0x5E   // SFLP low-power output data rate
 #define ISM330BX_MLC_FIFO_EN           (1 << 0)
 #define ISM330BX_STEP_COUNTER_FIFO_EN  (1 << 1)
 #define ISM330BX_SFLP_GBIAS_FIFO_EN    (1 << 2)
 #define ISM330BX_SFLP_GRAVITY_FIFO_EN  (1 << 3)
 #define ISM330BX_SFLP_GAME_FIFO_EN     (1 << 4)
+#define ISM330BX_SFLP_GYROSCOPE_BIAS_TAG        0x03
+#define ISM330BX_SFLP_GRAVITY_VECTOR_TAG        0x06
+#define ISM330BX_SFLP_GAME_ROTATION_VECTOR_TAG  0x13
 
 
 #define ISM330BX_WHO_AM_I_EXPECTED 0x71

@@ -1,8 +1,6 @@
 // lib/ISM330BXSensor/ISM330BXSensor.cpp
 #include "ISM330BXSensor.h"
 #include <Arduino.h>
-#include <math.h>
-
 
 // Constructor
 ISM330BXSensor::ISM330BXSensor(TwoWire *i2c, uint8_t address) {
@@ -288,100 +286,8 @@ ISM330BXStatusTypeDef ISM330BXSensor::enableSensorFusion() {
   } else {
     Serial.println("Failed to enable sensor fusion");
   }
-
-
-  // Enable FIFO for quaternion
-  writeRegDirect(0x45, ISM330BX_SFLP_GAME_FIFO_EN); // EMB_FUNC_FIFO_EN_B
-  writeRegDirect(0x07, 0x20); // FIFO_CTRL1: watermark low (16 samples for example)
-  writeRegDirect(0x09, 0x01); // FIFO_CTRL3: SFLP game rot vector
-  writeRegDirect(0x0A, 0x01); // FIFO_CTRL4: FIFO mode = Continuous
-
-    
-  return result;
-}
-
-ISM330BXStatusTypeDef ISM330BXSensor::readQuaternion(float *quat) {
-  // Assumes FIFO is enabled and SFLP_GAME_FIFO_EN is active
-  uint8_t tag;
-  uint8_t buf[9];
   
-  Serial.println("Reading FIFO tag...");
-  if (readRegDirect(ISM330BX_FIFO_DATA_OUT_TAG, &tag) != ISM330BX_STATUS_OK) {
-    Serial.println("Failed to read FIFO tag");
-    return ISM330BX_STATUS_ERROR;
-  }
-  Serial.print("FIFO tag: 0x"); Serial.println(tag & 0x1F, HEX);
-
-  if ((tag & 0x1F) != 0x13) return ISM330BX_STATUS_ERROR; // Quaternion tag
-
-    if (readRegDirect(ISM330BX_FIFO_DATA_OUT_BYTE_0, buf, 8) != ISM330BX_STATUS_OK) {
-    Serial.println("Failed to read FIFO quaternion data");
-    return ISM330BX_STATUS_ERROR;
-  }
-
-  int16_t qw = (int16_t)(buf[1] << 8 | buf[0]);
-  int16_t qx = (int16_t)(buf[3] << 8 | buf[2]);
-  int16_t qy = (int16_t)(buf[5] << 8 | buf[4]);
-  int16_t qz = (int16_t)(buf[7] << 8 | buf[6]);
-
-  const float scale = 1.0f / 16384.0f; // ST format: Q14
-  quat[0] = qw * scale;
-  quat[1] = qx * scale;
-  quat[2] = qy * scale;
-  quat[3] = qz * scale;
-
-  return ISM330BX_STATUS_OK;
-}
-
-void ISM330BXSensor::quaternionInverse(const float *q, float *qInv) {
-  qInv[0] = q[0];
-  qInv[1] = -q[1];
-  qInv[2] = -q[2];
-  qInv[3] = -q[3];
-}
-
-void ISM330BXSensor::quaternionRotate(const float *q, const float *v, float *vOut) {
-  // q * v * q^-1, v = {0, x, y, z}
-  float u[4] = {0, v[0], v[1], v[2]};
-  float qInv[4], r[4], result[4];
-
-  quaternionInverse(q, qInv);
-
-  // r = q * u
-  r[0] = q[0]*u[0] - q[1]*u[1] - q[2]*u[2] - q[3]*u[3];
-  r[1] = q[0]*u[1] + q[1]*u[0] + q[2]*u[3] - q[3]*u[2];
-  r[2] = q[0]*u[2] - q[1]*u[3] + q[2]*u[0] + q[3]*u[1];
-  r[3] = q[0]*u[3] + q[1]*u[2] - q[2]*u[1] + q[3]*u[0];
-
-  // result = r * q^-1
-  result[0] = r[0]*qInv[0] - r[1]*qInv[1] - r[2]*qInv[2] - r[3]*qInv[3];
-  result[1] = r[0]*qInv[1] + r[1]*qInv[0] + r[2]*qInv[3] - r[3]*qInv[2];
-  result[2] = r[0]*qInv[2] - r[1]*qInv[3] + r[2]*qInv[0] + r[3]*qInv[1];
-  result[3] = r[0]*qInv[3] + r[1]*qInv[2] - r[2]*qInv[1] + r[3]*qInv[0];
-
-  vOut[0] = result[1];
-  vOut[1] = result[2];
-  vOut[2] = result[3];
-}
-
-bool ISM330BXSensor::setGravityReference() {
-  float quat[4];
-  if (readQuaternion(quat) != ISM330BX_STATUS_OK) return false;
-  quaternionInverse(quat, _referenceQuat);
-  _hasReferenceQuat = true;
-  Serial.println("Reference orientation set.");
-  return true;
-}
-
-bool ISM330BXSensor::applyGravityReference(int32_t *vec) {
-  if (!_hasReferenceQuat) return false;
-  float g[3] = {vec[0] / 1000.0f, vec[1] / 1000.0f, vec[2] / 1000.0f};
-  float gOut[3];
-  quaternionRotate(_referenceQuat, g, gOut);
-  vec[0] = (int32_t)(gOut[0] * 1000);
-  vec[1] = (int32_t)(gOut[1] * 1000);
-  vec[2] = (int32_t)(gOut[2] * 1000);
-  return true;
+  return result;
 }
 
 // Check if gravity vector data is ready
@@ -398,7 +304,215 @@ bool ISM330BXSensor::checkGravityDataReady() {
   return (status & 0x01) != 0;
 }
 
+// Read quaternion data
+ISM330BXStatusTypeDef ISM330BXSensor::readQuaternion(float *quat) {
+  uint8_t data[6];
+  auto result = readRegDirect(ISM330BX_FIFO_DATA_OUT_TAG, data, 6);
+  if (result != ISM330BX_STATUS_OK) {
+    Serial.println("Failed to read quaternion data");
+    return result;
+  }
+
+  uint16_t *rawQuat = (uint16_t*)data;
+  
+  // Convert from half-precision to float
+  // Using simplified conversion for Arduino
+  float sumsq = 0;
+  
+  for (int i = 0; i < 3; i++) {
+    // Simple half-precision to float conversion
+    uint16_t h = rawQuat[i];
+    uint16_t h_exp = (h & 0x7c00u);
+    uint32_t f_sgn = ((uint32_t)h & 0x8000u) << 16;
+    uint32_t result = 0;
+    
+    if (h_exp == 0x0000u) { // Zero or subnormal
+      uint16_t h_sig = (h & 0x03ffu);
+      if (h_sig == 0) {
+        result = f_sgn;
+      } else {
+        h_sig <<= 1;
+        while ((h_sig & 0x0400u) == 0) {
+          h_sig <<= 1;
+          h_exp++;
+        }
+        uint32_t f_exp = ((uint32_t)(127 - 15 - h_exp)) << 23;
+        uint32_t f_sig = ((uint32_t)(h_sig & 0x03ffu)) << 13;
+        result = f_sgn + f_exp + f_sig;
+      }
+    } else if (h_exp == 0x7c00u) { // Infinity or NaN
+      result = f_sgn + 0x7f800000u + (((uint32_t)(h & 0x03ffu)) << 13);
+    } else { // Normalized
+      result = f_sgn + (((uint32_t)(h & 0x7fffu) + 0x1c000u) << 13);
+    }
+    
+    // Convert the bit pattern to float
+    float* resultFloat = (float*)&result;
+    quat[i] = *resultFloat;
+    sumsq += quat[i] * quat[i];
+  }
+  
+  // Calculate the fourth component
+  if (sumsq > 1.0f) {
+    // Normalize if sum of squares exceeds 1
+    float n = sqrt(sumsq);
+    quat[0] /= n;
+    quat[1] /= n;
+    quat[2] /= n;
+    sumsq = 1.0f;
+  }
+  
+  // Calculate w component
+  quat[3] = sqrt(1.0f - sumsq);
+  
+  return ISM330BX_STATUS_OK;
+}
+
+// Set the current orientation as reference (zero) position
+// Set the current orientation as reference (zero) position
+bool ISM330BXSensor::setGravityReference() {
+  int32_t gravityVector[3];
+  
+  // Read the current gravity vector
+  if (readGravityVector(gravityVector) != ISM330BX_STATUS_OK) {
+    Serial.println("Failed to read gravity vector for reference");
+    return false;
+  }
+  
+  // Calculate rotation needed to transform current gravity to [0,0,1000]
+  float currentNorm = sqrt(gravityVector[0]*gravityVector[0] + 
+                           gravityVector[1]*gravityVector[1] + 
+                           gravityVector[2]*gravityVector[2]);
+  
+  if (currentNorm < 10.0f) { // Prevent division by zero or very small values
+    Serial.println("Gravity vector magnitude too small");
+    return false;
+  }
+  
+  // Normalize the gravity vector
+  float gx = gravityVector[0] / currentNorm;
+  float gy = gravityVector[1] / currentNorm;
+  float gz = gravityVector[2] / currentNorm;
+  
+  // Default gravity vector (unit vector in Z direction)
+  float defaultGx = 0.0f;
+  float defaultGy = 0.0f;
+  float defaultGz = 1.0f;
+  
+  // Calculate rotation axis and angle using cross product
+  float crossX = gy * defaultGz - gz * defaultGy;
+  float crossY = gz * defaultGx - gx * defaultGz;
+  float crossZ = gx * defaultGy - gy * defaultGx;
+  
+  float crossMag = sqrt(crossX*crossX + crossY*crossY + crossZ*crossZ);
+  
+  // If vectors are nearly parallel, use simpler method
+  if (crossMag < 0.001f) {
+    if (gz > 0.999f) { // Already aligned with Z
+      _referenceQuat[0] = 0.0f;
+      _referenceQuat[1] = 0.0f;
+      _referenceQuat[2] = 0.0f;
+      _referenceQuat[3] = 1.0f;
+    } else { // Anti-parallel, rotate 180° around X
+      _referenceQuat[0] = 1.0f;
+      _referenceQuat[1] = 0.0f;
+      _referenceQuat[2] = 0.0f;
+      _referenceQuat[3] = 0.0f;
+    }
+  } else {
+    // Normalize the cross product
+    crossX /= crossMag;
+    crossY /= crossMag;
+    crossZ /= crossMag;
+    
+    // Calculate the rotation angle (dot product)
+    float dotProduct = gx * defaultGx + gy * defaultGy + gz * defaultGz;
+    float angle = acos(constrain(dotProduct, -1.0f, 1.0f));
+    
+    // Create quaternion from axis-angle
+    float halfAngle = angle * 0.5f;
+    float sinHalfAngle = sin(halfAngle);
+    
+    _referenceQuat[0] = crossX * sinHalfAngle;
+    _referenceQuat[1] = crossY * sinHalfAngle;
+    _referenceQuat[2] = crossZ * sinHalfAngle;
+    _referenceQuat[3] = cos(halfAngle);
+  }
+  
+  _hasReferenceQuat = true;
+  Serial.println("Gravity reference set successfully");
+  return true;
+}
+
+
+// Apply the gravity reference to transform the gravity vector
+bool ISM330BXSensor::applyGravityReference(int32_t *vec) {
+  if (!_hasReferenceQuat) {
+    return false;
+  }
+  
+  // Convert integer vector to float
+  float vecFloat[3];
+  for (int i = 0; i < 3; i++) {
+    vecFloat[i] = (float)vec[i];
+  }
+  
+  // Apply rotation using reference quaternion
+  float vecRotated[3];
+  quaternionRotate(_referenceQuat, vecFloat, vecRotated);
+  
+  // Convert back to integer
+  for (int i = 0; i < 3; i++) {
+    vec[i] = (int32_t)round(vecRotated[i]);
+  }
+  
+  return true;
+}
+
+// Calculate the inverse of a quaternion
+void ISM330BXSensor::quaternionInverse(const float *q, float *qInv) {
+  // For unit quaternions, inverse equals conjugate
+  float norm = q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3];
+  
+  if (fabs(norm - 1.0f) > 0.01f) {
+    // Not a unit quaternion, need to normalize
+    float invNorm = 1.0f / norm;
+    qInv[0] = -q[0] * invNorm;
+    qInv[1] = -q[1] * invNorm;
+    qInv[2] = -q[2] * invNorm;
+    qInv[3] = q[3] * invNorm;
+  } else {
+    // Unit quaternion, just take conjugate
+    qInv[0] = -q[0];
+    qInv[1] = -q[1];
+    qInv[2] = -q[2];
+    qInv[3] = q[3];
+  }
+}
+
+// Rotate a vector by a quaternion
+void ISM330BXSensor::quaternionRotate(const float *q, const float *v, float *vOut) {
+  // qv = [0, v]
+  float qv[4] = {v[0], v[1], v[2], 0.0f};
+  float temp[4];
+  
+  // temp = q * qv
+  temp[0] = q[3]*qv[0] + q[1]*qv[2] - q[2]*qv[1];
+  temp[1] = q[3]*qv[1] + q[2]*qv[0] - q[0]*qv[2];
+  temp[2] = q[3]*qv[2] + q[0]*qv[1] - q[1]*qv[0];
+  temp[3] = -q[0]*qv[0] - q[1]*qv[1] - q[2]*qv[2];
+  
+  // qinv = conjugate of q (since q is normalized)
+  float qinv[4] = {-q[0], -q[1], -q[2], q[3]};
+  
+  // vOut = temp * qinv (only vector part)
+  vOut[0] = temp[0]*qinv[3] + temp[3]*qinv[0] + temp[1]*qinv[2] - temp[2]*qinv[1];
+  vOut[1] = temp[1]*qinv[3] + temp[3]*qinv[1] + temp[2]*qinv[0] - temp[0]*qinv[2];
+  vOut[2] = temp[2]*qinv[3] + temp[3]*qinv[2] + temp[0]*qinv[1] - temp[1]*qinv[0];
+}
+
 // Read gravity vector data
+// Read gravity vector data with reference correction
 ISM330BXStatusTypeDef ISM330BXSensor::readGravityVector(int32_t *gravityVector) {
   uint8_t data[6];
   auto result = readRegDirect(ISM330BX_UI_OUTZ_L_A_DualC, data, 6);
@@ -414,6 +528,15 @@ ISM330BXStatusTypeDef ISM330BXSensor::readGravityVector(int32_t *gravityVector) 
   gravityVector[0] = (int32_t)round(rawX * scale);
   gravityVector[1] = (int32_t)round(rawY * scale);
   gravityVector[2] = (int32_t)round(rawZ * scale);
+  
+  // Apply reference quaternion if set
+  if (_hasReferenceQuat) {
+    applyGravityReference(gravityVector);
+  }
 
   return ISM330BX_STATUS_OK;
+}
+
+void ISM330BXSensor::setGravityZero() {
+  setGravityReference();
 }
