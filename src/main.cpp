@@ -440,7 +440,7 @@ void imuTask(void *pvParameters) {
         #if DEBUG_ENABLE
         Serial.println("[IMU] Error initializing ISM330BX");
         #endif
-        vTaskDelay(pdMS_TO_TICKS(100)); // Спробувати ще через секунду (може бути шо i2c ше не стабілізувався, тому треба тріха подрихнути)
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Спробувати ще через секунду (може бути шо i2c ше не стабілізувався, тому треба тріха подрихнути)
         if (imu.begin() != ISM330BX_STATUS_OK) {
             #if DEBUG_ENABLE
             Serial.println("[IMU] Second attempt failed, aborting IMU task");
@@ -529,7 +529,6 @@ void temperatureTask(void *pvParameters) {
       xSemaphoreGive(modbusRegisterMutex);
     }
     
-
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }
