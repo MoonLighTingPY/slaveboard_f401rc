@@ -9,29 +9,11 @@
 #include <stdarg.h>
 #include <MAX6675.h>
 
-#define STACK_SIZE 256 // Increased stack size for tasks
+#define STACK_SIZE 256
 #define MODBUS_BAUD 115200
 #define MODBUS_CONFIG SERIAL_8N1
 #define DEBUG_ENABLE 1 // Дебаг в серіал. Якщо поставити 0, то все пов'язане з дебагом не компілюється
-#define DEBUG_MSG_SIZE 128
 
-
-#if DEBUG_ENABLE
-static char oneShotDebugMsg[DEBUG_MSG_SIZE];
-static bool oneShotDebugMsgValid = false;
-
-// Use this everywhere instead of sendDebugMessage(...)
-void sendOneShotDebugMessage(const char* format, ...) {
-  va_list args;
-  va_start(args, format);
-  vsnprintf(oneShotDebugMsg, DEBUG_MSG_SIZE, format, args);
-  va_end(args);
-  oneShotDebugMsgValid = true;
-}
-#else
-// no-op when debugging is disabled
-inline void sendOneShotDebugMessage(const char*, ...) {}
-#endif 
 
 // Піни
 const int16_t sensorPins[4] = {PC3, PC2, PC1, PC0}; // Інпути сенсорів
@@ -58,7 +40,7 @@ MAX6675 thermocouple(thermoSCK, thermoCS, thermoMISO);
 
 
 // Modbus змінні
-const uint8_t NUM_COILS = 5;
+const uint8_t NUM_COILS = 3;
 const uint8_t NUM_DISCRETE_INPUTS = 4;
 const uint8_t NUM_HOLDING_REGISTERS = 5;
 const uint8_t NUM_INPUT_REGISTERS = 6;
@@ -112,7 +94,7 @@ void setup() {
   #if DEBUG_ENABLE
   Serial.begin(115200); // Основний серіал по юсб, для дебагу
   while(!Serial) { 
-    delay(10);
+    delay(10); // Чекаємо поки серіал не підключиться
   } 
   delay(100);
   #endif
@@ -120,38 +102,10 @@ void setup() {
   Serial1.begin(MODBUS_BAUD, MODBUS_CONFIG); // Modbus RTU
   Serial2.begin(115200, SERIAL_8N1); // Драйвер для моторів
 
-  // Initialize the i2c object
+  // I2C для IMU
   i2c.begin();
   i2c.setClock(400000);
-  delay(500);
-
-  #if DEBUG_ENABLE
-  // I2C scanner - find the IMU
-  Serial.println("Scanning I2C bus...");
-  byte error, addressI2C;
-  int deviceCount = 0;
-
-  for(addressI2C = 1; addressI2C < 127; addressI2C++) {
-    i2c.beginTransmission(addressI2C);
-    error = i2c.endTransmission();
-    
-    if (error == 0) {
-      Serial.print("I2C device found at address 0x");
-      if (addressI2C < 16) Serial.print("0");
-      Serial.print(addressI2C, HEX);
-      Serial.println();
-      deviceCount++;
-    }
-  }
-
-  if (deviceCount == 0) {
-    Serial.println("No I2C devices found! IMU may not be connected.");
-  } else {
-    Serial.print("Found ");
-    Serial.print(deviceCount);
-    Serial.println(" I2C device(s)");
-  }
-  #endif
+  delay(500); // Затримка для стабілізації I2C
 
   // RS-485 driver enable pin
   pinMode(dePin, OUTPUT);
@@ -231,8 +185,8 @@ void setup() {
     imuTask,
     "IMU_Task",
     STACK_SIZE,
-    NULL,  // Pass pointer to the sensor object
-    2,  // Priority
+    NULL,
+    2,
     &imuTaskHandle
   );
 
@@ -241,7 +195,7 @@ void setup() {
     "TempTask",
     STACK_SIZE,
     NULL,
-    2,  // Lower priority
+    2,
     &tempTaskHandle
   );
 
@@ -273,7 +227,6 @@ void debugTask(void *pvParameters) {
   xLastWakeTime = xTaskGetTickCount();
   
   for(;;) {
-    // Process regular status info
     if (xSemaphoreTake(modbusRegisterMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
       Serial.println("------- DEBUG INFO -------");
       Serial.print("STATUS: MB Addr="); Serial.print(modbusSlaveAddress);
@@ -310,15 +263,23 @@ void debugTask(void *pvParameters) {
         Serial.print(", ");
       }
       Serial.println();
-      
+      Serial.print("Temperature: ");
+      Serial.print(holdingRegisters[1]/10.0);
+      Serial.print("°C");
+      Serial.println();
+
+      Serial.print("Gravity Vector: X=");
+      Serial.print((int16_t)holdingRegisters[2]);
+      Serial.print(", Y=");
+      Serial.print((int16_t)holdingRegisters[3]);
+      Serial.print(", Z=");
+      Serial.print(holdingRegisters[4]);
+      Serial.println(" (mg)");
+
+            
       xSemaphoreGive(modbusRegisterMutex);
     }
     
-    // Process custom messages from queue
-    if (oneShotDebugMsgValid) {
-        Serial.println(oneShotDebugMsg);
-        oneShotDebugMsgValid = false;
-    }
     
     Serial.println("-------------------------");
     
@@ -475,18 +436,18 @@ void imuTask(void *pvParameters) {
     vTaskDelay(pdMS_TO_TICKS(100));
     
     #if DEBUG_ENABLE
-    Serial.println("Initializing ISM330BX IMU on STEVAL-MKI245KA board...");
+    Serial.println("[IMU] Initializing ISM330BX IMU on STEVAL-MKI245KA board...");
     #endif
     
     // Initialize the sensor with custom ISM330BX driver
     if (imu.begin() != ISM330BX_STATUS_OK) {
         #if DEBUG_ENABLE
-        Serial.println("Error initializing ISM330BX");
+        Serial.println("[IMU] Error initializing ISM330BX");
         #endif
         delay(1000); // Wait and try again
         if (imu.begin() != ISM330BX_STATUS_OK) {
             #if DEBUG_ENABLE
-            Serial.println("Second attempt failed, aborting IMU task");
+            Serial.println("[IMU] Second attempt failed, aborting IMU task");
             #endif
             vTaskDelete(NULL);
         }
@@ -497,7 +458,7 @@ void imuTask(void *pvParameters) {
     imu.enableSensorFusion(); // Enable sensor fusion for gravity vector
     
     #if DEBUG_ENABLE
-    Serial.println("ISM330BX initialization complete!");
+    Serial.println("[IMU] ISM330BX initialization complete!");
     #endif
     
     // Start the main processing loop
@@ -511,31 +472,25 @@ void imuTask(void *pvParameters) {
             // Read gravity vector when available
             if (imu.checkGravityDataReady()) {
                 imu.readGravityVector(gravityVector);
-                #if DEBUG_ENABLE
-                sendOneShotDebugMessage("Gravity Vector: X=%ld, Y=%ld, Z=%ld (mg)",
-                                        gravityVector[0],
-                                        gravityVector[1],
-                                        gravityVector[2]);
-                #endif
-             if (coils[4]) {
+             if (coils[2]) {
                   // Capture current orientation as the new reference
                   if (imu.setGravityReference()) {
                       imu.applyGravityReference(gravityVector);
 
                       #if DEBUG_ENABLE
-                      Serial.println("Gravity vector reset to zero");
+                      Serial.println("[IMU] Gravity vector reset to zero");
                       #endif
                   } else {
                       #if DEBUG_ENABLE
-                      Serial.println("Failed to set gravity reference");
+                      Serial.println("[IMU] Failed to set gravity reference");
                       #endif
                   }
-                  coils[4] = false;
+                  coils[2] = false;
               }
 
             } else {
                 #if DEBUG_ENABLE
-                sendOneShotDebugMessage("Gravity data not ready");
+                Serial.println("[IMU] Gravity data not ready");
                 #endif
                 
             }
@@ -558,6 +513,7 @@ void imuTask(void *pvParameters) {
 }
 
 // Task to read temperature from MAX6675 thermocouple
+// Task to read temperature from MAX6675 thermocouple
 void temperatureTask(void *pvParameters) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = pdMS_TO_TICKS(1000); // Read temperature once per second
@@ -567,7 +523,7 @@ void temperatureTask(void *pvParameters) {
   vTaskDelay(pdMS_TO_TICKS(500));
   
   #if DEBUG_ENABLE
-  Serial.println("Temperature sensor task started");
+  Serial.println("[TEMP] Initializing MAX6675 thermocouple...");
   #endif
   
   xLastWakeTime = xTaskGetTickCount();
@@ -576,14 +532,12 @@ void temperatureTask(void *pvParameters) {
     // Read the temperature
     temperature = thermocouple.readCelsius();
     
-    #if DEBUG_ENABLE
-    sendOneShotDebugMessage("Temperature: %.2f°C", temperature);
-    #endif
-    
     // Update the Modbus holding register
     if (xSemaphoreTake(modbusRegisterMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
       // Store temperature as an integer (e.g., 25.4°C becomes 254)
       holdingRegisters[1] = (uint16_t)(temperature * 10);
+
+      
       xSemaphoreGive(modbusRegisterMutex);
     }
     
