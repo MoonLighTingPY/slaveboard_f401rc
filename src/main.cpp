@@ -506,7 +506,7 @@ void imuTask(void *pvParameters) {
 // Таска для термопари MAX6675
 void temperatureTask(void *pvParameters) {
   TickType_t xLastWakeTime;
-  const TickType_t xFrequency = pdMS_TO_TICKS(10);
+  const TickType_t xFrequency = pdMS_TO_TICKS(250); // 250ms (4Hz) Не потрібно частіше, бо термопара не так швидко реагує + перестає відповідати, якщо оптиувати частіше
   float temperature = 0.0;
   
   vTaskDelay(pdMS_TO_TICKS(500));
