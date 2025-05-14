@@ -500,6 +500,26 @@ void imuTask(void *pvParameters) {
                                         gravityVector[1],
                                         gravityVector[2]);
                 #endif
+             if (coils[1]) {
+                  // Capture current orientation as the new reference
+                  if (imu.setGravityReference()) {
+                      imu.applyGravityReference(gravityVector);
+
+                      #if DEBUG_ENABLE
+                      Serial.println("Gravity vector reset to zero");
+                      #endif
+                  } else {
+                      #if DEBUG_ENABLE
+                      Serial.println("Failed to set gravity reference");
+                      #endif
+                  }
+                  coils[1] = false;
+              }
+
+            } else {
+                #if DEBUG_ENABLE
+                sendOneShotDebugMessage("Gravity data not ready");
+                #endif
                 
             }
                 

@@ -1,6 +1,8 @@
 // lib/ISM330BXSensor/ISM330BXSensor.cpp
 #include "ISM330BXSensor.h"
 #include <Arduino.h>
+#include <math.h>
+
 
 // Constructor
 ISM330BXSensor::ISM330BXSensor(TwoWire *i2c, uint8_t address) {
@@ -286,8 +288,97 @@ ISM330BXStatusTypeDef ISM330BXSensor::enableSensorFusion() {
   } else {
     Serial.println("Failed to enable sensor fusion");
   }
-  
+
+
+  // Enable FIFO for quaternion
+  writeRegDirect(0x45, ISM330BX_SFLP_GAME_FIFO_EN); // EMB_FUNC_FIFO_EN_B
+  writeRegDirect(0x07, 0x20); // FIFO_CTRL1: watermark low (16 samples for example)
+  writeRegDirect(0x09, 0x01); // FIFO_CTRL3: SFLP game rot vector
+  writeRegDirect(0x0A, 0x01); // FIFO_CTRL4: FIFO mode = Continuous
+
+    
   return result;
+}
+
+ISM330BXStatusTypeDef ISM330BXSensor::readQuaternion(float *quat) {
+  // Assumes FIFO is enabled and SFLP_GAME_FIFO_EN is active
+  uint8_t tag;
+  uint8_t buf[9];
+  
+  Serial.println("Reading FIFO tag...");
+  if (readRegDirect(ISM330BX_FIFO_DATA_OUT_TAG, &tag) != ISM330BX_STATUS_OK) {
+    Serial.println("Failed to read FIFO tag");
+    return ISM330BX_STATUS_ERROR;
+  }
+  Serial.print("FIFO tag: 0x"); Serial.println(tag & 0x1F, HEX);
+
+  if ((tag & 0x1F) != 0x13) return ISM330BX_STATUS_ERROR; // Quaternion tag
+
+  if (readRegDirect(ISM330BX_FIFO_DATA_OUT, buf, 8) != ISM330BX_STATUS_OK) return ISM330BX_STATUS_ERROR;
+
+  int16_t qw = (int16_t)(buf[1] << 8 | buf[0]);
+  int16_t qx = (int16_t)(buf[3] << 8 | buf[2]);
+  int16_t qy = (int16_t)(buf[5] << 8 | buf[4]);
+  int16_t qz = (int16_t)(buf[7] << 8 | buf[6]);
+
+  const float scale = 1.0f / 16384.0f; // ST format: Q14
+  quat[0] = qw * scale;
+  quat[1] = qx * scale;
+  quat[2] = qy * scale;
+  quat[3] = qz * scale;
+
+  return ISM330BX_STATUS_OK;
+}
+
+void ISM330BXSensor::quaternionInverse(const float *q, float *qInv) {
+  qInv[0] = q[0];
+  qInv[1] = -q[1];
+  qInv[2] = -q[2];
+  qInv[3] = -q[3];
+}
+
+void ISM330BXSensor::quaternionRotate(const float *q, const float *v, float *vOut) {
+  // q * v * q^-1, v = {0, x, y, z}
+  float u[4] = {0, v[0], v[1], v[2]};
+  float qInv[4], r[4], result[4];
+
+  quaternionInverse(q, qInv);
+
+  // r = q * u
+  r[0] = q[0]*u[0] - q[1]*u[1] - q[2]*u[2] - q[3]*u[3];
+  r[1] = q[0]*u[1] + q[1]*u[0] + q[2]*u[3] - q[3]*u[2];
+  r[2] = q[0]*u[2] - q[1]*u[3] + q[2]*u[0] + q[3]*u[1];
+  r[3] = q[0]*u[3] + q[1]*u[2] - q[2]*u[1] + q[3]*u[0];
+
+  // result = r * q^-1
+  result[0] = r[0]*qInv[0] - r[1]*qInv[1] - r[2]*qInv[2] - r[3]*qInv[3];
+  result[1] = r[0]*qInv[1] + r[1]*qInv[0] + r[2]*qInv[3] - r[3]*qInv[2];
+  result[2] = r[0]*qInv[2] - r[1]*qInv[3] + r[2]*qInv[0] + r[3]*qInv[1];
+  result[3] = r[0]*qInv[3] + r[1]*qInv[2] - r[2]*qInv[1] + r[3]*qInv[0];
+
+  vOut[0] = result[1];
+  vOut[1] = result[2];
+  vOut[2] = result[3];
+}
+
+bool ISM330BXSensor::setGravityReference() {
+  float quat[4];
+  if (readQuaternion(quat) != ISM330BX_STATUS_OK) return false;
+  quaternionInverse(quat, _referenceQuat);
+  _hasReferenceQuat = true;
+  Serial.println("Reference orientation set.");
+  return true;
+}
+
+bool ISM330BXSensor::applyGravityReference(int32_t *vec) {
+  if (!_hasReferenceQuat) return false;
+  float g[3] = {vec[0] / 1000.0f, vec[1] / 1000.0f, vec[2] / 1000.0f};
+  float gOut[3];
+  quaternionRotate(_referenceQuat, g, gOut);
+  vec[0] = (int32_t)(gOut[0] * 1000);
+  vec[1] = (int32_t)(gOut[1] * 1000);
+  vec[2] = (int32_t)(gOut[2] * 1000);
+  return true;
 }
 
 // Check if gravity vector data is ready
