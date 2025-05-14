@@ -1,25 +1,26 @@
-// lib/ISM330BXSensor/ISM330BXSensor.cpp
 #include "ISM330BXSensor.h"
 #include <Arduino.h>
 
-// Constructor
+// Comments will be written in english, as i am going to commit this to my github as a lib
+
+//  Constructor
 ISM330BXSensor::ISM330BXSensor(TwoWire *i2c, uint8_t address) {
   _i2c = i2c;
   _address = address;
 }
 
-// Initialize the sensor
+// Initialization of the ISM330BX sensor
 ISM330BXStatusTypeDef ISM330BXSensor::begin() {
   uint8_t whoAmI = 0;
   int attempts = 0;
   const int maxAttempts = 5;
   
-  // Give I2C bus time to settle
+  // A lil delay to wait for I2C to settle
   delay(50);
   
   Serial.println("Starting ISM330BX initialization...");
   
-  // Try multiple times to read WHO_AM_I
+  // Try to read WHO_AM_I register multiple times
   while (attempts < maxAttempts) {
     Serial.print("Attempt ");
     Serial.print(attempts + 1);
@@ -29,7 +30,7 @@ ISM330BXStatusTypeDef ISM330BXSensor::begin() {
       Serial.print("WHO_AM_I value: 0x");
       Serial.println(whoAmI, HEX);
       
-      // Successfully read WHO_AM_I
+      // Successful read, check if it matches expected value
       if (whoAmI == ISM330BX_WHO_AM_I_EXPECTED) {
         break;
       } else {
@@ -48,7 +49,8 @@ ISM330BXStatusTypeDef ISM330BXSensor::begin() {
     return ISM330BX_STATUS_ERROR;
   }
   
-  // Set BDU (Block Data Update)
+  // Setting the mode as BDU (Block Data Update) to prevent data from being updated while reading
+  // This is important for ensuring data integrity during read operations
   Serial.println("Setting BDU...");
   uint8_t ctrl3 = 0x04; // BDU bit
   if (writeRegDirect(ISM330BX_CTRL3_C, ctrl3) != ISM330BX_STATUS_OK) {
@@ -74,9 +76,7 @@ ISM330BXStatusTypeDef ISM330BXSensor::enableAccelerometer() {
 }
 
 // Enable gyroscope
-// In ISM330BXSensor.cpp - enableGyroscope() function
 ISM330BXStatusTypeDef ISM330BXSensor::enableGyroscope() {
-  // Try a stronger ODR and range setting
   uint8_t ctrl2_g = 0x50 | 0x0C; // 0x50 (208Hz) | 0x0C (2000dps)
   
   // Read current value first
@@ -84,7 +84,7 @@ ISM330BXStatusTypeDef ISM330BXSensor::enableGyroscope() {
   if (readRegDirect(ISM330BX_CTRL2_G, &current_value) == ISM330BX_STATUS_OK) {
     Serial.print("Current CTRL2_G value: 0x"); Serial.println(current_value, HEX);
   }
-  
+  // Set ODR and FS
   ISM330BXStatusTypeDef result = writeRegDirect(ISM330BX_CTRL2_G, ctrl2_g);
   if (result == ISM330BX_STATUS_OK) {
     Serial.println("Gyroscope enabled with higher settings");
@@ -122,24 +122,26 @@ bool ISM330BXSensor::checkDataReady() {
 ISM330BXStatusTypeDef ISM330BXSensor::readAcceleration(int32_t *acceleration) {
   uint8_t data[6];
   
-  // Read all 6 registers in sequence
+  // Read all 6 registers in sequence from low to high b
   ISM330BXStatusTypeDef result = readRegDirect(ISM330BX_OUTZ_L_A, data, 6);
   if (result != ISM330BX_STATUS_OK) {
     return result;
   }
   
   // Combine high and low bytes and apply scale factor (0.061 mg/LSB for ±4g range)
-  // Note: Register order is Z, Y, X according to the datasheet
+  // !! Register order is Z, Y, X according to the datasheet
   int16_t rawZ = (int16_t)((data[1] << 8) | data[0]);
   int16_t rawY = (int16_t)((data[3] << 8) | data[2]);
   int16_t rawX = (int16_t)((data[5] << 8) | data[4]);
   
+  // Apply scale factor to convert to mg
   acceleration[0] = (int32_t)(rawX * 0.061f);
   acceleration[1] = (int32_t)(rawY * 0.061f);
   acceleration[2] = (int32_t)(rawZ * 0.061f);
   
   return ISM330BX_STATUS_OK;
 }
+
 
 bool ISM330BXSensor::checkGyroDataReady() {
   uint8_t status = 0;
@@ -187,6 +189,7 @@ ISM330BXStatusTypeDef ISM330BXSensor::readRegDirect(uint8_t reg, uint8_t *data, 
   uint8_t maxAttempts = 5;  // Increase max attempts
   bool success = false;
   
+  // Attempts to read the register, so i2c is restarted if needed.
   while (attempts < maxAttempts && !success) {
     // Clear any previous error state
     if (attempts > 0) {
@@ -198,7 +201,7 @@ ISM330BXStatusTypeDef ISM330BXSensor::readRegDirect(uint8_t reg, uint8_t *data, 
     
     _i2c->beginTransmission(_address);
     _i2c->write(reg);
-    uint8_t endResult = _i2c->endTransmission(false);  // No STOP condition
+    uint8_t endResult = _i2c->endTransmission(false);  // No STOP condition, as we want to read right after
     
     if (endResult != 0) {
       Serial.print("I2C address write failed with error ");
@@ -209,14 +212,14 @@ ISM330BXStatusTypeDef ISM330BXSensor::readRegDirect(uint8_t reg, uint8_t *data, 
     }
     
     // Immediate read after write
-    uint8_t bytesReceived = _i2c->requestFrom(_address, len, true);  // STOP after read
+    uint8_t bytesReceived = _i2c->requestFrom(_address, len, true);  // STOP after read, true for release bus
     if (bytesReceived != len) {
       Serial.print("Requested ");
       Serial.print(len);
       Serial.print(" bytes, but received ");
       Serial.println(bytesReceived);
       attempts++;
-      delay(10 * attempts);  // Exponential backoff
+      delay(10 * attempts);
       continue;
     }
     
@@ -256,14 +259,6 @@ ISM330BXStatusTypeDef ISM330BXSensor::writeRegDirect(uint8_t reg, uint8_t data) 
   return success ? ISM330BX_STATUS_OK : ISM330BX_STATUS_ERROR;
 }
 
-// Keep these for backward compatibility
-ISM330BXStatusTypeDef ISM330BXSensor::readReg(uint8_t reg, uint8_t *data) {
-  return readRegDirect(reg, data);
-}
-
-ISM330BXStatusTypeDef ISM330BXSensor::writeReg(uint8_t reg, uint8_t data) {
-  return writeRegDirect(reg, data);
-}
 
 
 ISM330BXStatusTypeDef ISM330BXSensor::enableSensorFusion() {

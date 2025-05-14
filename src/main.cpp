@@ -280,7 +280,6 @@ void debugTask(void *pvParameters) {
       xSemaphoreGive(modbusRegisterMutex);
     }
     
-    
     Serial.println("-------------------------");
     
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -330,7 +329,7 @@ void sensorTask(void *pvParameters) {
       reloadSensor = discreteInputs[0];
       if (reloadSensor != lastReloadSensor) {
         if (reloadSensor == LOW) {
-          // Reset bullet counter on reload
+          // При перезарядці скидаємо лічильник куль
           bulletCounter = 0;
         }
       }
@@ -338,7 +337,7 @@ void sensorTask(void *pvParameters) {
       
       holdingRegisters[0] = bulletCounter;
       
-      // If holding register is manually cleared, reset counter
+      // Якщо регістр скинуто, то скидаємо й лічильник
       if (holdingRegisters[0] == 0) {
         bulletCounter = 0;
       }
@@ -350,7 +349,7 @@ void sensorTask(void *pvParameters) {
   }
 }
 
-// Таска для управління виходами
+// Таска для управління виводами
 void outputTask(void *pvParameters) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = 20; // 20ms (50Hz)
@@ -386,7 +385,7 @@ void motorControlTask(void *pvParameters) {
       reloadSignal = coils[1];
       if (reloadSignal != lastReloadSignal) {
         if (reloadSignal == HIGH && reloadSensor == LOW) {
-          xSemaphoreGive(modbusRegisterMutex); // Звільняємо м'ютекс, бо serial.print блокуючий
+          xSemaphoreGive(modbusRegisterMutex); // Звільняємо м'ютекс
           
           Serial2.println("w axis0.requested_state 8");
           Serial2.println("v 0 -100");
@@ -426,25 +425,22 @@ void motorControlTask(void *pvParameters) {
   }
 }
 
-// IMU sensor task for STEVAL-MKI245KA (ISM330BX)
+// Таска для IMU STEVAL-MKI245KA (на ISM330BX)
 void imuTask(void *pvParameters) {
     TickType_t xLastWakeTime;
     const TickType_t xFrequency = pdMS_TO_TICKS(10); // 100Hz sampling
-    int32_t acceleration[3], angularRate[3], gravityVector[3];
-    
-    // Wait a bit for system to stabilize
-    vTaskDelay(pdMS_TO_TICKS(100));
+    int32_t gravityVector[3];
     
     #if DEBUG_ENABLE
     Serial.println("[IMU] Initializing ISM330BX IMU on STEVAL-MKI245KA board...");
     #endif
     
-    // Initialize the sensor with custom ISM330BX driver
+    // Ініціалізація IMU
     if (imu.begin() != ISM330BX_STATUS_OK) {
         #if DEBUG_ENABLE
         Serial.println("[IMU] Error initializing ISM330BX");
         #endif
-        delay(1000); // Wait and try again
+        vTaskDelay(pdMS_TO_TICKS(100)); // Спробувати ще через секунду (може бути шо i2c ше не стабілізувався, тому треба тріха подрихнути)
         if (imu.begin() != ISM330BX_STATUS_OK) {
             #if DEBUG_ENABLE
             Serial.println("[IMU] Second attempt failed, aborting IMU task");
@@ -455,28 +451,25 @@ void imuTask(void *pvParameters) {
     
     imu.enableGyroscope();
     imu.enableAccelerometer();
-    imu.enableSensorFusion(); // Enable sensor fusion for gravity vector
+    imu.enableSensorFusion(); // Для гравітаційного вектора
     
     #if DEBUG_ENABLE
     Serial.println("[IMU] ISM330BX initialization complete!");
     #endif
     
-    // Start the main processing loop
-    xLastWakeTime = xTaskGetTickCount();
-    
+
+    xLastWakeTime = xTaskGetTickCount();    
     for(;;) {
-        // Read sensor data when available
+        // Читаєм дані з IMU коли є нові
         if (imu.checkDataReady()) {
-            imu.readGyroscope(angularRate);
             
-            // Read gravity vector when available
+            // Читаємо гравітаційний вектор коли він готовий
             if (imu.checkGravityDataReady()) {
                 imu.readGravityVector(gravityVector);
              if (coils[2]) {
-                  // Capture current orientation as the new reference
-                  if (imu.setGravityReference()) {
-                      imu.applyGravityReference(gravityVector);
-
+                  // Якщо подали одиничку на цю катушку, значить треба поставити цей грав. вектор як нульовий
+                  if (imu.setGravityReference()) { // Скидаємо вектор гравітації
+                      imu.applyGravityReference(gravityVector); // Зразу встановлюємо новий вектор (не чекаємо на наступний цикл)
                       #if DEBUG_ENABLE
                       Serial.println("[IMU] Gravity vector reset to zero");
                       #endif
@@ -495,7 +488,7 @@ void imuTask(void *pvParameters) {
                 
             }
                 
-            // Update Modbus registers with the data
+            // Оновлюємо регістри в Modbus
             if (xSemaphoreTake(modbusRegisterMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
 
                 holdingRegisters[2] = gravityVector[0];
@@ -506,20 +499,16 @@ void imuTask(void *pvParameters) {
                 xSemaphoreGive(modbusRegisterMutex);
             }
         }
-        
-        // Wait for the next cycle
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
 
-// Task to read temperature from MAX6675 thermocouple
-// Task to read temperature from MAX6675 thermocouple
+// Таска для термопари MAX6675
 void temperatureTask(void *pvParameters) {
   TickType_t xLastWakeTime;
-  const TickType_t xFrequency = pdMS_TO_TICKS(1000); // Read temperature once per second
+  const TickType_t xFrequency = pdMS_TO_TICKS(10);
   float temperature = 0.0;
   
-  // Wait for the MAX6675 to stabilize
   vTaskDelay(pdMS_TO_TICKS(500));
   
   #if DEBUG_ENABLE
@@ -529,19 +518,18 @@ void temperatureTask(void *pvParameters) {
   xLastWakeTime = xTaskGetTickCount();
   
   for(;;) {
-    // Read the temperature
+    // Читаємо температуру з термопари
     temperature = thermocouple.readCelsius();
     
-    // Update the Modbus holding register
+    // Оновлюємо регістри в Modbus
     if (xSemaphoreTake(modbusRegisterMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-      // Store temperature as an integer (e.g., 25.4°C becomes 254)
+      // Зберігаємо температуру в регістр як ціле число (наприклад, 25.4°C * 10 стає 254)
       holdingRegisters[1] = (uint16_t)(temperature * 10);
 
-      
       xSemaphoreGive(modbusRegisterMutex);
     }
     
-    // Wait for the next cycle
+
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
   }
 }
