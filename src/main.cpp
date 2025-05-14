@@ -476,6 +476,7 @@ void imuTask(void *pvParameters) {
     }
     
     imu.enableGyroscope();
+    imu.enableAccelerometer();
     imu.enableSensorFusion(); // Enable sensor fusion for gravity vector
     
     #if DEBUG_ENABLE

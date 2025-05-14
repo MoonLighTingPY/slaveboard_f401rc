@@ -307,28 +307,19 @@ bool ISM330BXSensor::checkGravityDataReady() {
 // Read gravity vector data
 ISM330BXStatusTypeDef ISM330BXSensor::readGravityVector(int32_t *gravityVector) {
   uint8_t data[6];
-  
-  // Read all 6 registers in sequence for the gravity vector
-  ISM330BXStatusTypeDef result = readRegDirect(ISM330BX_UI_OUTZ_L_A_DualC, data, 6);
+  auto result = readRegDirect(ISM330BX_UI_OUTZ_L_A_DualC, data, 6);
   if (result != ISM330BX_STATUS_OK) {
     Serial.println("Failed to read gravity vector data");
     return result;
   }
-  
-  // Combine high and low bytes for each axis
-  // Note: Register order is Z, Y, X according to the datasheet
   int16_t rawZ = (int16_t)((data[1] << 8) | data[0]);
   int16_t rawY = (int16_t)((data[3] << 8) | data[2]);
   int16_t rawX = (int16_t)((data[5] << 8) | data[4]);
-  
-  // Apply scale factor - same as accelerometer since this is gravity
-  // The scale factor depends on your accelerometer range setting
-  float scale = 0.061f; // 0.061 mg/LSB for ±4g range
-  
-  // Convert to mg and store in output array
-  gravityVector[0] = (int32_t)(rawX * scale);
-  gravityVector[1] = (int32_t)(rawY * scale);
-  gravityVector[2] = (int32_t)(rawZ * scale);
-  
+
+  const float scale = 0.488f;       // mg per LSB
+  gravityVector[0] = (int32_t)round(rawX * scale);
+  gravityVector[1] = (int32_t)round(rawY * scale);
+  gravityVector[2] = (int32_t)round(rawZ * scale);
+
   return ISM330BX_STATUS_OK;
 }
