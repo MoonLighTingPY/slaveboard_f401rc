@@ -31,20 +31,33 @@
 #define ISM330BX_UI_OUTX_L_A_DualC 0x38  // Gravity X-axis low byte
 #define ISM330BX_UI_OUTX_H_A_DualC 0x39  // Gravity X-axis high byte
 
-#define ISM330BX_FIFO_DATA_OUT_TAG 0x3E
+#define ISM330BX_FIFO_DATA_OUT_TAG 0x78
 #define ISM330BX_FIFO_CTRL1        0x07
 #define ISM330BX_FIFO_CTRL3        0x09
 #define ISM330BX_FIFO_CTRL4        0x0A
-#define ISM330BX_FIFO_STATUS1      0x3A
-#define ISM330BX_FIFO_STATUS2      0x3B
-#define ISM330BX_FIFO_DATA_OUT     0x3E
+#define ISM330BX_FIFO_STATUS1      0x1B
+#define ISM330BX_FIFO_STATUS2      0x1C
+#define ISM330BX_FIFO_DATA_OUT_BYTE_0 0x79
+#define ISM330BX_FIFO_DATA_OUT_BYTE_1 0x7A  // FIFO data output register
+#define ISM330BX_FIFO_DATA_OUT_BYTE_2 0x7B  // FIFO data output register
+#define ISM330BX_FIFO_DATA_OUT_BYTE_3 0x7C  // FIFO data output register
+#define ISM330BX_FIFO_DATA_OUT_BYTE_4 0x7D  // FIFO data output register
+#define ISM330BX_FIFO_DATA_OUT_BYTE_5 0x7E  // FIFO data output register
+
+
 #define ISM330BX_EMB_FUNC_EN_A     0x04  // Embedded functions enable register A
 #define ISM330BX_EMB_FUNC_INIT_A   0x66  // Embedded functions initialization register A
+#define ISM330BX_EMB_FUNC_FIFO_EN_A 0x44
 #define ISM330BX_EMB_FUNC_FIFO_EN_B 0x45
 
 #define ISM330BX_SFLP_GAME_EN      0x01  // Bit 0 of EMB_FUNC_EN_A register
 #define ISM330BX_SFLP_GAME_INIT    0x01  // Bit 0 of EMB_FUNC_INIT_A register
-#define ISM330BX_SFLP_GAME_FIFO_EN 0x04
+#define ISM330BX_MLC_FIFO_EN           (1 << 0)
+#define ISM330BX_STEP_COUNTER_FIFO_EN  (1 << 1)
+#define ISM330BX_SFLP_GBIAS_FIFO_EN    (1 << 2)
+#define ISM330BX_SFLP_GRAVITY_FIFO_EN  (1 << 3)
+#define ISM330BX_SFLP_GAME_FIFO_EN     (1 << 4)
+
 
 #define ISM330BX_WHO_AM_I_EXPECTED 0x71
 
