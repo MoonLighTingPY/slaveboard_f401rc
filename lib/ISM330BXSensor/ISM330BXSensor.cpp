@@ -314,7 +314,10 @@ ISM330BXStatusTypeDef ISM330BXSensor::readQuaternion(float *quat) {
 
   if ((tag & 0x1F) != 0x13) return ISM330BX_STATUS_ERROR; // Quaternion tag
 
-  if (readRegDirect(ISM330BX_FIFO_DATA_OUT, buf, 8) != ISM330BX_STATUS_OK) return ISM330BX_STATUS_ERROR;
+    if (readRegDirect(ISM330BX_FIFO_DATA_OUT_BYTE_0, buf, 8) != ISM330BX_STATUS_OK) {
+    Serial.println("Failed to read FIFO quaternion data");
+    return ISM330BX_STATUS_ERROR;
+  }
 
   int16_t qw = (int16_t)(buf[1] << 8 | buf[0]);
   int16_t qx = (int16_t)(buf[3] << 8 | buf[2]);
