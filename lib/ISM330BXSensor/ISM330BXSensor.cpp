@@ -184,33 +184,39 @@ ISM330BXStatusTypeDef ISM330BXSensor::readRegDirect(uint8_t reg, uint8_t *data) 
 // Direct I2C register read (multiple bytes)
 ISM330BXStatusTypeDef ISM330BXSensor::readRegDirect(uint8_t reg, uint8_t *data, uint8_t len) {
   uint8_t attempts = 0;
-  uint8_t maxAttempts = 3;
+  uint8_t maxAttempts = 5;  // Increase max attempts
   bool success = false;
   
   while (attempts < maxAttempts && !success) {
+    // Clear any previous error state
+    if (attempts > 0) {
+      _i2c->end();
+      delay(10);
+      _i2c->begin();
+      delay(10);
+    }
+    
     _i2c->beginTransmission(_address);
     _i2c->write(reg);
-    uint8_t endResult = _i2c->endTransmission(true); // Full STOP
+    uint8_t endResult = _i2c->endTransmission(false);  // No STOP condition
     
     if (endResult != 0) {
       Serial.print("I2C address write failed with error ");
       Serial.println(endResult);
       attempts++;
-      delay(5);
+      delay(10 * attempts);  // Exponential backoff
       continue;
     }
     
-    delay(1); // Small delay
-    
-    // Separate transaction for reading
-    uint8_t bytesReceived = _i2c->requestFrom(_address, len);
+    // Immediate read after write
+    uint8_t bytesReceived = _i2c->requestFrom(_address, len, true);  // STOP after read
     if (bytesReceived != len) {
       Serial.print("Requested ");
       Serial.print(len);
       Serial.print(" bytes, but received ");
       Serial.println(bytesReceived);
       attempts++;
-      delay(5);
+      delay(10 * attempts);  // Exponential backoff
       continue;
     }
     

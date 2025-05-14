@@ -7,6 +7,7 @@
 #include <Wire.h>
 #include <ISM330BXSensor.h>
 #include <stdarg.h>
+#include <MAX6675.h>
 
 #define STACK_SIZE 256 // Increased stack size for tasks
 #define MODBUS_BAUD 115200
@@ -38,6 +39,9 @@ const int16_t outPins[4] = {PC13, PA0, PC15, PC14}; // Виводи для уп�
 const int16_t ledPins[4] = {PB12, PB13, PB14, PB15}; // Діоди індикації
 const int16_t dePin = PA8;                          // Пін DE для RS-485
 const int16_t addressPins[4] = {PC10, PC11, PC12, PD2}; // DIP світчі для адресації Modbus
+const int thermoSCK = PA5;  // SCK pin
+const int thermoCS = PA4;   // CS pin
+const int thermoMISO = PA6;   // MISO pin
 
 // Серіал для Modbus
 HardwareSerial Serial1(USART1);
@@ -50,8 +54,11 @@ ModbusRTUSlave modbus(Serial1, dePin);
 TwoWire i2c(PB7, PB6);
 ISM330BXSensor imu(&i2c, 0x6A); // Global IMU instance (SD0 to GND)
 
+MAX6675 thermocouple(thermoSCK, thermoCS, thermoMISO);
+
+
 // Modbus змінні
-const uint8_t NUM_COILS = 4;
+const uint8_t NUM_COILS = 5;
 const uint8_t NUM_DISCRETE_INPUTS = 4;
 const uint8_t NUM_HOLDING_REGISTERS = 5;
 const uint8_t NUM_INPUT_REGISTERS = 6;
@@ -80,20 +87,21 @@ bool imuFound = false;
 // М'ютекс, щоб не було конфліктів при доступі до масивів Modbus між тасками
 SemaphoreHandle_t modbusRegisterMutex; 
 
-
-
 // Хендлери і декларації тасок
 TaskHandle_t modbusTaskHandle;
 TaskHandle_t sensorTaskHandle;
 TaskHandle_t outputTaskHandle;
 TaskHandle_t motorControlTaskHandle;
 TaskHandle_t imuTaskHandle;
+TaskHandle_t tempTaskHandle;
 
 void modbusTask(void *pvParameters);
 void sensorTask(void *pvParameters);
 void outputTask(void *pvParameters);
 void motorControlTask(void *pvParameters);
 void imuTask(void *pvParameters);
+void temperatureTask(void *pvParameters);
+
 
 #if DEBUG_ENABLE
 TaskHandle_t debugTaskHandle;
@@ -114,7 +122,7 @@ void setup() {
 
   // Initialize the i2c object
   i2c.begin();
-  i2c.setClock(100000);
+  i2c.setClock(400000);
   delay(500);
 
   #if DEBUG_ENABLE
@@ -226,6 +234,15 @@ void setup() {
     NULL,  // Pass pointer to the sensor object
     2,  // Priority
     &imuTaskHandle
+  );
+
+  xTaskCreate(
+    temperatureTask,
+    "TempTask",
+    STACK_SIZE,
+    NULL,
+    2,  // Lower priority
+    &tempTaskHandle
   );
 
 
@@ -500,7 +517,7 @@ void imuTask(void *pvParameters) {
                                         gravityVector[1],
                                         gravityVector[2]);
                 #endif
-             if (coils[1]) {
+             if (coils[4]) {
                   // Capture current orientation as the new reference
                   if (imu.setGravityReference()) {
                       imu.applyGravityReference(gravityVector);
@@ -513,7 +530,7 @@ void imuTask(void *pvParameters) {
                       Serial.println("Failed to set gravity reference");
                       #endif
                   }
-                  coils[1] = false;
+                  coils[4] = false;
               }
 
             } else {
@@ -538,4 +555,39 @@ void imuTask(void *pvParameters) {
         // Wait for the next cycle
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
+}
+
+// Task to read temperature from MAX6675 thermocouple
+void temperatureTask(void *pvParameters) {
+  TickType_t xLastWakeTime;
+  const TickType_t xFrequency = pdMS_TO_TICKS(1000); // Read temperature once per second
+  float temperature = 0.0;
+  
+  // Wait for the MAX6675 to stabilize
+  vTaskDelay(pdMS_TO_TICKS(500));
+  
+  #if DEBUG_ENABLE
+  Serial.println("Temperature sensor task started");
+  #endif
+  
+  xLastWakeTime = xTaskGetTickCount();
+  
+  for(;;) {
+    // Read the temperature
+    temperature = thermocouple.readCelsius();
+    
+    #if DEBUG_ENABLE
+    sendOneShotDebugMessage("Temperature: %.2f°C", temperature);
+    #endif
+    
+    // Update the Modbus holding register
+    if (xSemaphoreTake(modbusRegisterMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+      // Store temperature as an integer (e.g., 25.4°C becomes 254)
+      holdingRegisters[1] = (uint16_t)(temperature * 10);
+      xSemaphoreGive(modbusRegisterMutex);
+    }
+    
+    // Wait for the next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
 }
