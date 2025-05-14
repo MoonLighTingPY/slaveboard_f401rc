@@ -253,7 +253,7 @@ void debugTask(void *pvParameters) {
 
       Serial.print("HOLDING REGISTERS: ");
       for (int i = 0; i < NUM_HOLDING_REGISTERS; i++) {
-        Serial.print(holdingRegisters[i]);
+        Serial.print((int16_t)holdingRegisters[i]);
         Serial.print(", ");
       }
       Serial.println();
@@ -273,7 +273,7 @@ void debugTask(void *pvParameters) {
       Serial.print(", Y=");
       Serial.print((int16_t)holdingRegisters[3]);
       Serial.print(", Z=");
-      Serial.print(holdingRegisters[4]);
+      Serial.print((int16_t)holdingRegisters[4]);  // Add the (int16_t) cast here
       Serial.println(" (mg)");
 
             
