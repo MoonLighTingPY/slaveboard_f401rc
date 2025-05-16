@@ -9,65 +9,56 @@
 #include <stdarg.h>
 #include <MAX6675.h>
 
-#define STACK_SIZE 256
+#define STACK_SIZE 256 // Розмір стека для тасок FreeRTOS
 #define MODBUS_BAUD 115200
-#define MODBUS_CONFIG SERIAL_8N1
+#define MODBUS_CONFIG SERIAL_8N1 
 #define DEBUG_ENABLE 1 // Дебаг в серіал. Якщо поставити 0, то все пов'язане з дебагом не компілюється
 
-
 // Піни
-const int16_t sensorPins[4] = {PC3, PC2, PC1, PC0}; // Інпути сенсорів
-const int16_t outPins[4] = {PC13, PA0, PC15, PC14}; // Виводи для управління
+const int16_t sensorPins[4] = {PC3, PC2, PC1, PC0}; // Інпути сенсорів (кінцевик, тд)
+const int16_t outPins[4] = {PC13, PA0, PC15, PC14}; // Виводи для управління (поки шо просто леди)
 const int16_t ledPins[4] = {PB12, PB13, PB14, PB15}; // Діоди індикації
 const int16_t dePin = PA8;                          // Пін DE для RS-485
-const int16_t addressPins[4] = {PC10, PC11, PC12, PD2}; // DIP світчі для адресації Modbus
-const int thermoSCK = PA5;  // SCK pin
-const int thermoCS = PA4;   // CS pin
-const int thermoMISO = PA6;   // MISO pin
+const int16_t DIP_Pins[4] = {PC10, PC11, PC12, PD2}; // DIP світчі на платі для адресації цього слейва Modbus 
+const int thermoSCK = PA5;  // SCK pin термопари
+const int thermoCS = PA4;   // CS pin термопари
+const int thermoMISO = PA6;   // MISO pin термопари
 
-// Серіал для Modbus
+// Серіал для Modbus 
 HardwareSerial Serial1(USART1);
-
 
 // Ініціалізація Modbus RTU як слейв, по Serial1, з DE піном
 ModbusRTUSlave modbus(Serial1, dePin);
 
-// I2C for IMU sensor - using PB7(SDA) and PB6(SCL)
+// I2C для IMU сенсора
 TwoWire i2c(PB7, PB6);
-ISM330BXSensor imu(&i2c, 0x6A); // Global IMU instance (SD0 to GND)
+ISM330BXSensor imu(&i2c, 0x6A); //  SD0 приєднаний до GND, щоб адреса була 0x6A
 
+// Ініціалізація термопари MAX6675
 MAX6675 thermocouple(thermoSCK, thermoCS, thermoMISO);
 
-
 // Modbus змінні
-const uint8_t NUM_COILS = 3;
-const uint8_t NUM_DISCRETE_INPUTS = 4;
-const uint8_t NUM_HOLDING_REGISTERS = 5;
+const uint8_t NUM_COILS = 3; // 0 - M2 спуск, 1 - перезарядка, 2 - нуль. позиц. для гравітаційного вектора
+const uint8_t NUM_DISCRETE_INPUTS = 4; 
+const uint8_t NUM_HOLDING_REGISTERS = 5; // 0 - лічильник куль, 1 - температура, 2 - гравітаційний вектор X, 3 - Y, 4 - Z
 const uint8_t NUM_INPUT_REGISTERS = 6;
-
-uint8_t modbusSlaveAddress = 3; // Адреса Modbus слейва
 bool coils[NUM_COILS]; // Масив котушок
 bool discreteInputs[NUM_DISCRETE_INPUTS]; // Масив дискретних входів
 uint16_t holdingRegisters[NUM_HOLDING_REGISTERS]; // Масив регістрів
 uint16_t inputRegisters[NUM_INPUT_REGISTERS];     // Масив регістрів вводу
+uint8_t modbusSlaveAddress = 3; // Адреса цього слейва за замовчуванням
 
-bool address[4]; // Окремі біти адреси Modbus
+bool DIP_modbus_swtiches[4]; // Окремі біти адреси Modbus
 
 // Сенсори та їх стани
 int reloadSensor = 0; // Стан перезарядки
-int lastReloadSensor = 0;
+int lastReloadSensor = 0; // Попередній стан, треба щоб детектити falling edge
 int reloadSignal = 0; // Сигнал перезарядки
 int lastReloadSignal = 0;
 int counterSensor = 0; // Стан сенсора лічильника
 int lastCounterSensor = 0;
 uint16_t bulletCounter = 0; // Лічильник куль
 
-// IMU address and detection state
-uint8_t imuAddress = 0;
-bool imuFound = false;
-
-// М'ютекс, щоб не було конфліктів при доступі до масивів Modbus між тасками
-SemaphoreHandle_t modbusRegisterMutex; 
 
 // Хендлери і декларації тасок
 TaskHandle_t modbusTaskHandle;
@@ -84,7 +75,10 @@ void motorControlTask(void *pvParameters);
 void imuTask(void *pvParameters);
 void temperatureTask(void *pvParameters);
 
+// М'ютекс, щоб не було конфліктів при доступі до масивів Modbus між тасками
+SemaphoreHandle_t modbusRegisterMutex; 
 
+// Компілюємо дебаг таску тільки якщо DEBUG_ENABLE == 1
 #if DEBUG_ENABLE
 TaskHandle_t debugTaskHandle;
 void debugTask(void *pvParameters);
@@ -94,25 +88,25 @@ void setup() {
   #if DEBUG_ENABLE
   Serial.begin(115200); // Основний серіал по юсб, для дебагу
   while(!Serial) { 
-    delay(10); // Чекаємо поки серіал не підключиться
+    delay(10); // Нічого не робимо, поки хтось не під'єднається до серіалу, щоб не пропустити ніяку важливу інфу
   } 
   delay(100);
   #endif
   
-  Serial1.begin(MODBUS_BAUD, MODBUS_CONFIG); // Modbus RTU
-  Serial2.begin(115200, SERIAL_8N1); // Драйвер для моторів
+  Serial1.begin(MODBUS_BAUD, MODBUS_CONFIG); // Серіал на Modbus RTU
+  Serial2.begin(115200, SERIAL_8N1); // Серіал для драйвера моторів
 
   // I2C для IMU
   i2c.begin();
   i2c.setClock(400000);
-  delay(500); // Затримка для стабілізації I2C
+  delay(500); // Затримка для стабілізації I2C, бо може бути, що IMU ще не готовий
 
   // RS-485 driver enable pin
   pinMode(dePin, OUTPUT);
 
   // DIP перемикачі для адресації Modbus (4 біти), підтягнуті до VCC
   for (int i = 0; i < 4; i++) {
-    pinMode(addressPins[i], INPUT_PULLUP);
+    pinMode(DIP_Pins[i], INPUT_PULLUP);
   }
   
   // Сенсори, підтягнуті до VCC
@@ -120,16 +114,16 @@ void setup() {
     pinMode(sensorPins[i], INPUT_PULLUP);
   }
   
-  // ВИводи для управління та індикації
+  // Виводи для керування та індикації
   for (int i = 0; i < 4; i++) {
     pinMode(outPins[i], OUTPUT);
     pinMode(ledPins[i], OUTPUT);
   }
   
-  // Задати адресу Modbus з DIP перемикачів (перевернуті, бо підтягнуті до VCC)
+  // Задаємо адресу Modbus з DIP перемикачів (перевернуті, бо підтягнуті до VCC)
   for (int i = 0; i < 4; i++) {
-    address[i] = !digitalRead(addressPins[i]);
-    bitWrite(modbusSlaveAddress, i, address[i]);
+    DIP_modbus_swtiches[i] = !digitalRead(DIP_Pins[i]);
+    bitWrite(modbusSlaveAddress, i, DIP_modbus_swtiches[i]);
   }
 
   // Конфігурація Modbus
@@ -141,7 +135,7 @@ void setup() {
   // Ініціалізація Modbus з адресою
   modbus.begin(modbusSlaveAddress, MODBUS_BAUD, MODBUS_CONFIG);
   
-  // Створення м'ютексу для захисту масивів Modbus
+  // Створення м'ютексу для захисту масивів Modbus, щоб не було конфліктів між тасками
   modbusRegisterMutex = xSemaphoreCreateMutex();
   
   // Створення тасок
@@ -168,7 +162,7 @@ void setup() {
     "OutputTask",
     STACK_SIZE,
     NULL,
-    1, // Низька пріоритетність, бо виводи не критичні
+    1, // Низька пріоритетність, бо виводи не критичні (поки що)
     &outputTaskHandle
   );
   
@@ -177,7 +171,7 @@ void setup() {
     "MotorControlTask",
     STACK_SIZE,
     NULL,
-    2, 
+    2,
     &motorControlTaskHandle
   );
 
@@ -218,11 +212,12 @@ void loop() {
 }
 
 
-
+// Дебаг таска. Виводить в серіал інформацію про стан всіх змінних Modbus, сенсорів, лічильника куль і тд.
+// Заради оптимізації - не компілюємо в продакшн (DEBUG_ENABLE = 0), бо вивід в серіал займає багацько часу
 #if DEBUG_ENABLE
 void debugTask(void *pvParameters) {
   TickType_t xLastWakeTime;
-  const TickType_t xFrequency = pdMS_TO_TICKS(500);
+  const TickType_t xFrequency = pdMS_TO_TICKS(500); // Раз в 500ms (2Hz), просто нема потреби частіше
   
   xLastWakeTime = xTaskGetTickCount();
   
@@ -273,7 +268,7 @@ void debugTask(void *pvParameters) {
       Serial.print(", Y=");
       Serial.print((int16_t)holdingRegisters[3]);
       Serial.print(", Z=");
-      Serial.print((int16_t)holdingRegisters[4]);  // Add the (int16_t) cast here
+      Serial.print((int16_t)holdingRegisters[4]);
       Serial.println(" (mg)");
 
             
@@ -290,7 +285,7 @@ void debugTask(void *pvParameters) {
 // Окрема таска для Modbus
 void modbusTask(void *pvParameters) {
   TickType_t xLastWakeTime;
-  const TickType_t xFrequency = 5; // 5ms (200Hz)
+  const TickType_t xFrequency = 5;
   
   xLastWakeTime = xTaskGetTickCount();
   
@@ -302,7 +297,7 @@ void modbusTask(void *pvParameters) {
   }
 }
 
-// Таска на читання сенсорів, оновлення входів та лічильника
+// Таска на читання сенсорів, оновлення входів та лічильника. Зразу записує в Modbus.
 void sensorTask(void *pvParameters) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = 10; // 10ms (100Hz)
@@ -372,14 +367,15 @@ void outputTask(void *pvParameters) {
   }
 }
 
-// Комунікація з драйвером до моторів
+// Таска для комунікації з драйвером моторів
 void motorControlTask(void *pvParameters) {
   TickType_t xLastWakeTime;
-  const TickType_t xFrequency = 50; // 50ms (20Hz)
+  const TickType_t xFrequency = 10;
   
   xLastWakeTime = xTaskGetTickCount();
   
   for(;;) {
+    // М'ютекс для доступу до масивів Modbus, шоб нич не попердоляло
     if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
       // Сигнал перезарядки
       reloadSignal = coils[1];
@@ -391,7 +387,8 @@ void motorControlTask(void *pvParameters) {
           Serial2.println("v 0 -100");
           vTaskDelay(pdMS_TO_TICKS(3000)); // Чекаємо поки драйвер відригне
           
-          if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) { // Забираємо м'ютекс назад
+          // Забираємо м'ютекс назад, щоб записати стан сигналу перезарядки
+          if (xSemaphoreTake(modbusRegisterMutex, portMAX_DELAY) == pdTRUE) {
             lastReloadSignal = reloadSignal;
             xSemaphoreGive(modbusRegisterMutex);
           }
@@ -403,7 +400,7 @@ void motorControlTask(void *pvParameters) {
       reloadSensor = discreteInputs[0];
       if (reloadSensor != lastReloadSensor) {
         if (reloadSensor == LOW) {
-          xSemaphoreGive(modbusRegisterMutex); 
+          xSemaphoreGive(modbusRegisterMutex);  // Звільняємо м'ютекс як тільки знаємо, що перезарядка почалась
           
           Serial2.println("w axis0.requested_state 1");
           
@@ -428,23 +425,25 @@ void motorControlTask(void *pvParameters) {
 // Таска для IMU STEVAL-MKI245KA (на ISM330BX)
 void imuTask(void *pvParameters) {
     TickType_t xLastWakeTime;
-    const TickType_t xFrequency = pdMS_TO_TICKS(10); // 100Hz sampling
+    const TickType_t xFrequency = pdMS_TO_TICKS(10);
     int32_t gravityVector[3];
     
     #if DEBUG_ENABLE
     Serial.println("[IMU] Initializing ISM330BX IMU on STEVAL-MKI245KA board...");
     #endif
     
-    // Ініціалізація IMU
+    // Спроба Ініціалізації IMU
     if (imu.begin() != ISM330BX_STATUS_OK) {
         #if DEBUG_ENABLE
         Serial.println("[IMU] Error initializing ISM330BX");
         #endif
-        vTaskDelay(pdMS_TO_TICKS(1000)); // Спробувати ще через секунду (може бути шо i2c ше не стабілізувався, тому треба тріха подрихнути)
+        // Спробувати ще через секунду (може бути шо i2c ше не стабілізувався, тому треба тріха подрихнути)
+        vTaskDelay(pdMS_TO_TICKS(1000)); 
         if (imu.begin() != ISM330BX_STATUS_OK) {
             #if DEBUG_ENABLE
             Serial.println("[IMU] Second attempt failed, aborting IMU task");
             #endif
+            // Якщо не вдалося ініціалізувати IMU, то завершуємо таску
             vTaskDelete(NULL);
         }
     }
@@ -460,14 +459,14 @@ void imuTask(void *pvParameters) {
 
     xLastWakeTime = xTaskGetTickCount();    
     for(;;) {
-        // Читаєм дані з IMU коли є нові
+        // Читаєм дані з IMU тільки коли є нові
         if (imu.checkDataReady()) {
             
-            // Читаємо гравітаційний вектор коли він готовий
+            // Читаємо гравітаційний вектор тільки коли він готовий
             if (imu.checkGravityDataReady()) {
                 imu.readGravityVector(gravityVector);
              if (coils[2]) {
-                  // Якщо подали одиничку на цю катушку, значить треба поставити цей грав. вектор як нульовий
+                  // Якщо подали одиничку на цю катушку, значить треба поставити цей гравітаційний вектор як нульовий
                   if (imu.setGravityReference()) { // Скидаємо вектор гравітації
                       imu.applyGravityReference(gravityVector); // Зразу встановлюємо новий вектор (не чекаємо на наступний цикл)
                       #if DEBUG_ENABLE
@@ -506,9 +505,11 @@ void imuTask(void *pvParameters) {
 // Таска для термопари MAX6675
 void temperatureTask(void *pvParameters) {
   TickType_t xLastWakeTime;
-  const TickType_t xFrequency = pdMS_TO_TICKS(250); // 250ms (4Hz) Не потрібно частіше, бо термопара не так швидко реагує + перестає відповідати, якщо оптиувати частіше
+  const TickType_t xFrequency = pdMS_TO_TICKS(250); // 250ms (4Hz) Більше не треба,
+  // бо термопара не так швидко реагує + тупо вмирає, якщо оптиувати частіше
   float temperature = 0.0;
   
+  // Затримка для стабілізації термопари перед підключенням (відбувається тільки 1 раз)
   vTaskDelay(pdMS_TO_TICKS(500));
   
   #if DEBUG_ENABLE
