@@ -51,13 +51,13 @@ uint8_t modbusSlaveAddress = 3; // Адреса цього слейва за з�
 bool DIP_modbus_swtiches[4]; // Окремі біти адреси Modbus
 
 // Сенсори та їх стани
-int reloadSensor = 0; // Стан перезарядки
-int lastReloadSensor = 0; // Попередній стан, треба щоб детектити falling edge
-int reloadSignal = 0; // Сигнал перезарядки
-int lastReloadSignal = 0;
-int counterSensor = 0; // Стан сенсора лічильника
-int lastCounterSensor = 0;
-uint16_t bulletCounter = 0; // Лічильник куль
+bool reloadSensor = 0; // Стан перезарядки
+bool lastReloadSensor = 0; // Попередній стан, треба щоб детектити falling edge
+bool reloadSignal = 0; // Сигнал перезарядки
+bool lastReloadSignal = 0;
+bool counterSensor = 0; // Стан сенсора лічильника
+bool lastCounterSensor = 0;
+uint8_t bulletCounter = 0; // Лічильник куль
 
 
 // Хендлери і декларації тасок
