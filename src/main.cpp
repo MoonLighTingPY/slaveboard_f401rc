@@ -451,6 +451,9 @@ void imuTask(void *pvParameters) {
     imu.enableGyroscope();
     imu.enableAccelerometer();
     imu.enableSensorFusion(); // Для гравітаційного вектора
+    imu.enableGravityFilter(GRAVITY_FILTER_HYBRID); // Ввімкнення фільтра для гравітаційного вектора (HYBRID - поріг + low-pass)
+    imu.configureThreshold(400);  // 400mg для простого фільтра з порогом. Відкидає всі вектори менші за 400mg
+    imu.configureAlpha(0.7f);     // 0.7 альфа для фільтра низьких частот (low-pass). Чим менше число - тим більше і довше фільтрує (+затриика)
     
     #if DEBUG_ENABLE
     Serial.println("[IMU] ISM330BX initialization complete!");
