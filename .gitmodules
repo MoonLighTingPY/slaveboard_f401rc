@@ -1,0 +1,6 @@
+[submodule "lib/lib/STM32duino_ISM330BX"]
+	path = lib/lib/STM32duino_ISM330BX
+	url = https://github.com/MoonLighTingPY/STM32duino_ISM330BX.git
+[submodule "lib/STM32duino_ISM330BX"]
+	path = lib/STM32duino_ISM330BX
+	url = https://github.com/MoonLighTingPY/STM32duino_ISM330BX.git
