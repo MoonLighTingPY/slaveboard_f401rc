@@ -1,0 +1,5 @@
+{
+    "git.fetchOnPull": true,
+    "git.autofetch": true,
+    "git.remotes": ["origin", "organization", "all"]
+}
