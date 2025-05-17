@@ -38,7 +38,7 @@ ISM330BXSensor imu(&i2c, 0x6A); //  SD0 приєднаний до GND, щоб а
 MAX6675 thermocouple(thermoSCK, thermoCS, thermoMISO);
 
 // Modbus змінні
-const uint8_t NUM_COILS = 3; // 0 - M2 спуск, 1 - перезарядка, 2 - нуль. позиц. для гравітаційного вектора
+const uint8_t NUM_COILS = 3; // 0 - M2 спуск, 1 - перезарядка, 2 - нуль. позиція для гравітаційного вектора
 const uint8_t NUM_DISCRETE_INPUTS = 4; 
 const uint8_t NUM_HOLDING_REGISTERS = 5; // 0 - лічильник куль, 1 - температура, 2 - гравітаційний вектор X, 3 - Y, 4 - Z
 const uint8_t NUM_INPUT_REGISTERS = 6;
