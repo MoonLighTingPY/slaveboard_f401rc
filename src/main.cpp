@@ -5,7 +5,7 @@
 #include <queue.h>
 #include <semphr.h>
 #include <Wire.h>
-#include <ISM330BXSensor.h>
+#include <ISM330BX.h>
 #include <stdarg.h>
 #include <MAX6675.h>
 
