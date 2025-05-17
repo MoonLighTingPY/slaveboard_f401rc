@@ -41,8 +41,9 @@ upload_protocol = stlink <--- ТУТ
 
 3. Завантажуйте код через upload/upload and monitor в меню platfomio
 
-## Робота з ISM330BX
+## Ліба до imu ISM330BX
 
 Бібліотека ISM330BX інтегрована як підмодуль в `./lib/ISM330BX`:
+Альтернатив нема, тому прийшлося нашкрябати. Бажано додати весь функціонал:
 
 Ось посилання на його даташит: https://www.st.com/resource/en/data_brief/steval-mki245ka.pdf
